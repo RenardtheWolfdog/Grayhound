@@ -5,6 +5,7 @@ import './SystemScanner.scss';
 interface ScanResult {
   id: string;
   name: string;
+  masked_name: string;
   reason: string;
   risk_score: number;
   path: string;
@@ -50,7 +51,12 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
         switch (type) {
         case 'scan_result':
             if (data && data.length > 0) {
-                const initialResults = data.map((item: Omit<ScanResult, 'clean'>) => ({ ...item, id: item.name, clean: true }));
+                const initialResults = data.map((item: Omit<ScanResult, 'clean'>) => ({ 
+                  ...item, 
+                  id: item.name, 
+                  masked_name: item.masked_name || item.name,
+                  clean: true 
+                }));
                 setScanResults(initialResults);
                 setProgressLog(prev => [...prev, '📊 Scan complete. Review the results below.']);
                 setStep('results');
@@ -179,7 +185,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
                 <div key={item.id} className="result-item">
                     <input type="checkbox" id={`clean-${item.id}`} checked={!!item.clean} onChange={() => toggleClean(item.id)} />
                     <label htmlFor={`clean-${item.id}`}>
-                        <strong>{item.name}</strong> (Risk: {item.risk_score})
+                        <strong>{item.masked_name}</strong> (Risk: {item.risk_score})
                         <span className="reason">{item.reason}</span>
                         <code className="path">{item.path}</code>
                     </label>

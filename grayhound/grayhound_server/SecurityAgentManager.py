@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 import database
 from agent_client import OptimizerAgentClient
 from google_ai_client import generate_text
+from utils import mask_name
 
 class SecurityAgentManager:
     """Grayhound의 전체 워크플로를 관리하고 오케스트레이션하는 클래스"""
@@ -78,7 +79,7 @@ class SecurityAgentManager:
             for threat in threat_db:
                 db_program_name = threat.get('program_name', '')
                 # 5-1. DB에 'generic_name'이 있으면 사용하고, 없으면 'program_name'을 대표 이름으로 사용
-                generic_name = threat.get('generic_name', threat.get('program_name', '')).lower()
+                generic_name = threat.get('generic_name', db_program_name).lower()
                 if not generic_name:
                     continue
 
@@ -88,13 +89,16 @@ class SecurityAgentManager:
                     
                     if current_risk >= risk_threshold:
                         base_reason = threat.get('reason', 'Included in known bloatware/grayware list.')
+                        masked_display_name = threat.get('masked_name', mask_name(db_program_name))
+                        
                         # 실제 탐지된 이름과 DB의 이름이 다를 경우, 변종임을 명시
                         if program_name_lower != db_program_name.lower():
-                            reason_for_display = f"Detected as a variant of '{db_program_name}' ({base_reason})"
+                            reason_for_display = f"Detected as a variant of '{mask_name(db_program_name)}' ({base_reason})"
                         else:
                             reason_for_display = base_reason
                         threat_details = {
                             "name": program_name, # 실제 PC에서 발견된 프로그램 이름
+                            "masked_name": mask_name(program_name), # 스캔 결과에도 마스킹된 이름을 추가
                             "reason": reason_for_display, # 위협 사유 (변종 여부 포함)
                             "risk_score": current_risk, # DB 기반 위험도
                             "path": program.get('install_location') or program.get('path', 'N/A'),
@@ -114,28 +118,26 @@ class SecurityAgentManager:
         """Local Agent에 최종 정리 목록을 전달하고, 실행 전후 성능 및 LLM 피드백을 포함한 최종 결과를 반환"""
         try:
             # Grayhound가 이해할 수 있는 형식으로 데이터 변환
-            optimizer_cleanup_list = [
-                {
-                    "name": item["name"],
-                    "command_type": "uninstall_program",
-                    "program_name": item["name"],
-                }
-                for item in cleanup_list
-            ]
+            name_to_masked_name = {item["name"]: item.get("masked_name", mask_name(item["name"])) for item in cleanup_list}
+
+            optimizer_cleanup_list = [{"name": item["name"], "command_type": "uninstall_program", "program_name": item["name"]} for item in cleanup_list]
+  
             logging.info(f"[{self.session_id}] Local Agent에 {len(optimizer_cleanup_list)}개의 항목 정리 요청... Requesting cleanup of {len(optimizer_cleanup_list)} items from Local Agent.")
-            cleanup_results = await self.optimizer_client.execute_cleanup_plan(optimizer_cleanup_list)
+            agent_results = await self.optimizer_client.execute_cleanup_plan(optimizer_cleanup_list)
             
-            if cleanup_results is None:
-                return {"error": "정리 작업 실행에 실패했습니다. Local Agent와 통신할 수 없습니다. Failed to execute cleanup. Cannot communicate with Local Agent."}
+            if agent_results is None:
+                return {"error": "정리 작업 실행에 실패했습니다. Local Agent와 통신할 수 없습니다."}
 
-            # 3. LLM 피드백 생성 (언어 설정 전달)
-            # cleanup_results가 dict일 수 있으므로 리스트로 감싸서 전달
-            if isinstance(cleanup_results, dict):
-                llm_feedback = await self._generate_llm_feedback([cleanup_results], language)
-            else:
-                llm_feedback = await self._generate_llm_feedback(cleanup_results, language)
+            comprehensive_results = []
+            for res in agent_results:
+                original_name = res.get("name")
+                res["masked_name"] = name_to_masked_name.get(original_name, mask_name(original_name))
+                comprehensive_results.append(res)
 
-            return {"results": cleanup_results, "llm_feedback": llm_feedback}
+            # LLM 피드백 생성 (언어 설정 전달)
+            llm_feedback = await self._generate_llm_feedback(comprehensive_results, language)
+
+            return {"results": comprehensive_results, "llm_feedback": llm_feedback}
 
         except Exception as e:
             logging.error(f"[{self.session_id}] 위협 제거 중 오류 발생: {e}", exc_info=True)
@@ -149,9 +151,9 @@ class SecurityAgentManager:
             return "정리된 항목이 없습니다." if language == 'ko' else "No items were cleaned."
         
        # 구조화된 결과에서 성공/실패 분리
-        successful_items = [res['name'] for res in cleanup_results if res.get('status') == 'success']
-        failed_items = [res['name'] for res in cleanup_results if res.get('status') == 'failure']
-        
+        successful_items = [res.get('masked_name', res.get('name')) for res in cleanup_results if res.get('status') == 'success']
+        failed_items = [res.get('masked_name', res.get('name')) for res in cleanup_results if res.get('status') == 'failure']
+           
         # 언어에 따른 프롬프트 생성
         prompts = {
             'ko': f"""

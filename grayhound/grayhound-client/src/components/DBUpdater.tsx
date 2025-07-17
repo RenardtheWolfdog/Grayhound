@@ -7,10 +7,17 @@ interface Queries {
   known_bloatware_queries: string[];
   general_search_queries: string[];
 }
+
+interface GeneratedQueriesState  {
+  original_queries: Queries;
+  masked_queries: Queries;
+}
+
 interface BackendMessage {
   type: 'progress' | 'error' | 'db_queries_generated' | 'db_list';
   data: any;
 }
+
 // 경고 메시지 다국어 지원
 const warnings = {
   en: "⚠️ Review the queries. Proceeding will start web crawling and DB updates. This may take several minutes. The creators are not responsible for any problems that may occur.",
@@ -21,7 +28,7 @@ const warnings = {
 
 export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (view: string) => void, setLanguage: (lang: string) => void }) => {
   const [updateStep, setUpdateStep] = useState('form');
-  const [generatedQueries, setGeneratedQueries] = useState<Queries | null>(null);
+  const [generatedQueries, setGeneratedQueries] = useState<GeneratedQueriesState | null>(null);
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessFinished, setIsProcessFinished] = useState(false);
@@ -49,7 +56,7 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
     };
 
     ws.current.onerror = (error) => {
-      setProgressLog(prev => [...prev, `[ERROR] ❌ WebSocket Error: ${error}`]);
+      setProgressLog(prev => [...prev, `[ERROR] ❌ WebSocket Error: ${JSON.stringify(error)}`]);
       setIsLoading(false);
     };
 
@@ -57,7 +64,7 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
       setProgressLog(prev => [...prev, '[INFO] 🛡️ Server Connection Closed.']);
     };
 
-    // 컴포넌트가 언마운트될 때 WebSocket 연결을 정리합니다.
+    // 컴포넌트가 언마운트될 때 WebSocket 연결을 정리
     return () => {
       ws.current?.close();
     };
@@ -136,7 +143,7 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
     // WebSocket을 통해 명령 전송
     ws.current?.send(JSON.stringify({
       command: 'confirm_db_update',
-      args: [JSON.stringify(generatedQueries)]
+      args: [JSON.stringify(generatedQueries.original_queries)]
     }));
   };
 
@@ -216,9 +223,9 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
       <h4>AI-Generated Queries</h4>
       <div className="report-box query-box">
         <strong>Known Bloatware (Grayware) Targets:</strong>
-        <ul>{generatedQueries?.known_bloatware_queries.map((q, i) => <li key={`k-${i}`}>{q}</li>)}</ul>
+        <ul>{generatedQueries?.masked_queries.known_bloatware_queries.map((q, i) => <li key={`k-${i}`}>{q}</li>)}</ul>
         <strong>General Search Queries:</strong>
-        <ul>{generatedQueries?.general_search_queries.map((q, i) => <li key={`g-${i}`}>{q}</li>)}</ul>
+        <ul>{generatedQueries?.masked_queries.general_search_queries.map((q, i) => <li key={`g-${i}`}>{q}</li>)}</ul>
       </div>
       <p className="warning">{warnings[currentLanguage as keyof typeof warnings] || warnings['en']}</p>
       <div className="row">

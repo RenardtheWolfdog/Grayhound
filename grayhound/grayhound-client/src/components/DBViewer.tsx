@@ -5,6 +5,7 @@ import './DBViewer.scss';
 interface BloatwareItem {
   id: string;
   name: string;
+  masked_name: string;
   reason: string;
   risk_score: number;
   ignored: boolean;
@@ -35,6 +36,7 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
           ...item,
           id: item.program_name,
           name: item.program_name,
+          masked_name: item.masked_name || item.program_name, // masked_name이 없으면 program_name으로 설정
           ignored: item.ignored === 'Yes'
         }));
         setDbList(formattedData);
@@ -130,7 +132,7 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
         <tbody>
           {dbList.map(item => (
             <tr key={item.id}>
-              <td>{item.name}</td>
+              <td>{item.masked_name}</td>
               <td>{item.reason}</td>
               <td>{item.risk_score}</td>
               <td>

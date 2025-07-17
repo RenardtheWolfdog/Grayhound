@@ -6,12 +6,14 @@ import logging
 import time
 import re
 import asyncio
+import copy # 딕셔너리 복사를 위해 임포트
 from typing import List, Dict, Any, Callable, Optional
 
 # 프로젝트에 필요한 모듈 임포트
 from google_ai_client import generate_text
 from GoogleSearch_Grayhound import search_and_extract_text
 import database # 중앙 DB 관리 모듈 임포트
+from utils import mask_name
 
 # --- 로깅 설정 ---
 logging.basicConfig(
@@ -72,13 +74,23 @@ class ThreatIntelligenceCollector:
         logging.info("Google AI Studio API response received.")
         
         try:
-            # --- ✅ 가장 안정적인 JSON 추출 로직 ---
+            # --- ✅ 안정적인 JSON 추출 로직 ---
             # 정규식을 사용하여 응답에서 JSON 객체 부분만 정확히 추출.
             match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if match:
                 json_str = match.group(0)
                 queries = json.loads(json_str)
-                logging.info(f"Successfully parsed and generated dynamic queries: {queries}")
+                # 로그 출력을 위해 마스킹된 쿼리 사본 생성
+                queries_for_log = copy.deepcopy(queries)
+                if "known_bloatware_queries" in queries_for_log:
+                    queries_for_log["known_bloatware_queries"] = [
+                        mask_name(q) for q in queries_for_log["known_bloatware_queries"]
+                    ]
+                
+                # 마스킹된 버전으로 로그 출력
+                logging.info(f"Successfully parsed and generated dynamic queries: {queries_for_log}")
+                
+                # 실제 로직에서는 원본 쿼리 반환
                 return queries
             else:
                 logging.error(f"Could not find a valid JSON object in the response. Full Response: {response_text}")
@@ -160,7 +172,8 @@ class ThreatIntelligenceCollector:
 
             if progress_emitter:
                 # 상세 진행 상태를 클라이언트로 전송
-                progress_emitter(f"({i+1}/{len(unique_candidates)}) Evaluating '{program_name}'...", None)
+                masked_display_name = mask_name(program_name)
+                progress_emitter(f"({i+1}/{len(unique_candidates)}) Evaluating '{masked_display_name}'...", None)
 
             logging.info(f"Evaluating and scoring candidate program: '{program_name}'")
             evaluation_prompt = f"""
@@ -203,17 +216,20 @@ class ThreatIntelligenceCollector:
                     evaluation_data = json.loads(match.group(0))
                     # 위험도 4점 (구버전: 6점 이상) 이상인 경우에만 목록에 추가
                     if evaluation_data.get("risk_score", 0) >= 4:
+                        # 마스킹된 이름 추가
+                        evaluation_data["masked_name"] = mask_name(evaluation_data["program_name"])
                         evaluated_programs.append(evaluation_data)
+                        
                         if progress_emitter:
-                            progress_emitter(f" -> ✅ Added '{program_name}' to list (Score: {evaluation_data['risk_score']})", "detail")
+                            progress_emitter(f" -> ✅ Added '{masked_display_name}' to list (Score: {evaluation_data['risk_score']})", "detail")
                         logging.info(f"-> Evaluation completed: '{program_name}', Risk Score: {evaluation_data['risk_score']}")
                 else:
                     if progress_emitter:
-                        progress_emitter(f" -> ⚠️ Could not evaluate '{program_name}'. Skipping.", "detail")
+                        progress_emitter(f" -> ⚠️ Could not evaluate '{masked_display_name}'. Skipping.", "detail")
                     logging.warning(f"'{program_name}' Evaluation response did not contain a JSON object.")
             except (json.JSONDecodeError, AttributeError):
                 if progress_emitter:
-                    progress_emitter(f" -> ❌ Failed to parse evaluation for '{program_name}'. Skipping.", "detail")    
+                    progress_emitter(f" -> ❌ Failed to parse evaluation for '{masked_display_name}'. Skipping.", "detail")    
                 logging.error(f"'{program_name}' Evaluation result parsing failed: {eval_response_text}")
 
             await asyncio.sleep(1) # API 과부하 방지를 위한 딜레이

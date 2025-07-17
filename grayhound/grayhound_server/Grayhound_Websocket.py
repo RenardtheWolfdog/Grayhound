@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import database
 from SecurityAgentManager import SecurityAgentManager
 from secure_agent.ThreatIntelligenceCollector import ThreatIntelligenceCollector
+from utils import mask_name
 
 # --- 로깅 설정 ---
 logging.basicConfig(
@@ -53,8 +54,20 @@ async def generate_queries_workflow(websocket, country: str, os_type: str):
             await emit_error(websocket, "Failed to generate search queries. Please check the inputs.")
             return
 
+        # 마스킹된 쿼리 생성
+        masked_known_queries = [mask_name(q) for q in dynamic_queries.get("known_bloatware_queries", [])]
+        
+        # 클라이언트에 보낼 데이터 구조 (원본과 마스킹된 버전 모두 포함)
+        payload = {
+            "original_queries": dynamic_queries,
+            "masked_queries": {
+                "known_bloatware_queries": masked_known_queries,
+                "general_search_queries": dynamic_queries.get("general_search_queries", [])
+            }
+        }
+
         # 생성된 쿼리를 'db_queries_generated' 타입으로 전송
-        await emit(websocket, "db_queries_generated", dynamic_queries)
+        await emit(websocket, "db_queries_generated", payload)
 
     except Exception as e:
         logging.error(f"An error occurred during query generation: {e}", exc_info=True)
