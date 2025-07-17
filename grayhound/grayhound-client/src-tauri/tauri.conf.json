@@ -1,0 +1,37 @@
+{
+  "$schema": "https://meta.tauri.app/schema/v2/config",
+  "productName": "Grayhound",
+  "version": "0.1.0",
+  "identifier": "com.grayhound.dev",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    },
+    "windows": [
+      {
+        "label": "main",
+        "fullscreen": false,
+        "resizable": true,
+        "title": "Grayhound: Bloatware Hunter",
+        "width": 1024,
+        "height": 768
+      }
+    ]
+  },
+  "bundle": {
+    "icon": ["icons/grayhound_32x32.png", "icons/grayhound_128x128.png", "icons/grayhound_128x128@2x.png", "icons/grayhound.icns", "icons/grayhound.ico"]
+  },  
+  "plugins": {
+    "shell": {}
+  }
+}

@@ -1,0 +1,60 @@
+// src/components/DBViewer.scss
+
+.db-viewer {
+  .row {
+    margin-bottom: 20px;
+  }
+
+  .styled-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9em;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+    background-color: #2a2a2a;
+
+    thead tr {
+      background-color: #009879;
+      color: #ffffff;
+      text-align: left;
+      font-weight: bold;
+    }
+
+    th, td {
+      padding: 12px 15px;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #444;
+      transition: background-color 0.2s ease;
+
+      &:nth-of-type(even) {
+        background-color: #333;
+      }
+
+      &:last-of-type {
+        border-bottom: 2px solid #009879;
+      }
+      
+      &:hover {
+        background-color: #009879;
+        color: #fff;
+      }
+    }
+
+    td:last-child {
+      text-align: center;
+    }
+
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+  }
+
+  p {
+    margin-bottom: 20px;
+  }
+} 

@@ -1,0 +1,186 @@
+// App.scss
+@import '@/assets/_variables.scss'; // 경로 별칭(@) 사용
+
+// 이제 변수를 사용할 수 있음.
+body {
+  background-color: $background-color;
+  color: $text-color;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+}
+
+.container {
+  padding: 2rem;
+  text-align: center;
+}
+
+h1, h2, h3 {
+  color: $primary-color;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+button {
+  background-color: $primary-color;
+  color: white;
+  border: none;
+  padding: 0.8rem 1.5rem;
+  border-radius: $border-radius;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.3s;
+
+  &:hover {
+    background-color: darken($primary-color, 10%);
+  }
+
+  &:disabled {
+    background-color: lighten($primary-color, 20%);
+    cursor: not-allowed;
+  }
+}
+
+.form-group {
+    margin-bottom: 1rem;
+    text-align: left;
+    display: inline-block;
+    margin-right: 1rem;
+
+    label {
+        display: block;
+        margin-bottom: 0.5rem;
+        color: $text-color;
+    }
+
+    select {
+        width: 200px;
+        padding: 0.5rem;
+        border-radius: $border-radius;
+        border: 1px solid $primary-color;
+        background-color: #333;
+        color: $text-color;
+    }
+}
+
+.styled-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 25px 0;
+    font-size: 0.9em;
+    font-family: sans-serif;
+    min-width: 400px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+
+    thead tr {
+        background-color: $primary-color;
+        color: #ffffff;
+        text-align: left;
+    }
+
+    th, td {
+        padding: 12px 15px;
+    }
+
+    tbody tr {
+        border-bottom: 1px solid #dddddd;
+        background-color: #333;
+    }
+
+    tbody tr:nth-of-type(even) {
+        background-color: #444;
+    }
+
+    tbody tr.active-row {
+        font-weight: bold;
+        color: $secondary-color;
+    }
+}
+
+.report-box {
+    margin-top: 2rem;
+    padding: 1rem;
+    border: 1px solid $primary-color;
+    border-radius: $border-radius;
+    background-color: #333;
+    text-align: left;
+    white-space: pre-wrap;
+}
+
+.warning {
+  color: #f39c12;
+  font-weight: bold;
+}
+
+.query-box {
+  text-align: left;
+  max-height: 200px;
+  overflow-y: auto;
+  ul {
+    margin-top: 5px;
+    padding-left: 20px;
+  }
+}
+
+.progress-log {
+  margin-top: 1rem;
+  background-color: #1e2128;
+  height: 200px;
+  overflow-y: scroll;
+  text-align: left;
+  p {
+    margin: 0.2rem 0;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.85rem;
+  }
+}
+
+.loading-text {
+    margin-top: 1rem;
+    font-style: italic;
+}
+
+
+.layout {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 250px;
+  background-color: #1e2128;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #444;
+
+  h1 {
+    margin: 0 0 0.5rem 0;
+  }
+  .subtitle {
+    margin: 0 0 2rem 0;
+    font-size: 0.9rem;
+    color: #aaa;
+  }
+
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+
+    button {
+      width: 100%;
+      text-align: left;
+    }
+  }
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}

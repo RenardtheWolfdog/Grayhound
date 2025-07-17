@@ -1,0 +1,131 @@
+// src/components/SystemScanner.scss
+
+.system-scanner {
+  .start-button {
+    margin-right: 10px;
+    padding: 12px 24px;
+    font-size: 1.2rem;
+  }
+
+  .results-container {
+    width: 100%;
+    margin-top: 20px;
+  }
+
+  .results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #333;
+    padding: 15px;
+    border-radius: 8px;
+    background-color: #1a1a1a;
+    margin-bottom: 20px;
+  }
+
+  .result-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 10px;
+    border-radius: 6px;
+    background-color: #252525;
+    border: 1px solid #444;
+    transition: background-color 0.2s;
+
+    &:hover {
+      background-color: #303030;
+    }
+
+    input[type="checkbox"] {
+      margin-top: 5px;
+      margin-right: 15px;
+      min-width: 18px;
+      height: 18px;
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+      width: 100%;
+
+      strong {
+        font-size: 1.1rem;
+        color: #e0e0e0;
+      }
+
+      .reason {
+        font-size: 0.9rem;
+        color: #aaa;
+        margin: 4px 0;
+      }
+
+      .path {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 0.85rem;
+        color: #8c8c8c;
+        word-break: break-all;
+      }
+    }
+  }
+  
+  .error-container {
+    .error-log {
+      color: #ff6b6b;
+      background-color: #2e1a1a;
+      border: 1px solid #8d4a4a;
+    }
+  }
+
+  .report-box {
+    pre {
+      white-space: pre-wrap;       /* 공백/줄바꿈 유지, 자동 줄바꿈 허용 */
+      word-wrap: break-word;       /* 긴 단어 강제 줄바꿈 */
+      text-align: left;            /* 텍스트 왼쪽 정렬 */
+      padding: 1rem;
+      background-color: #1e2128;
+      border-radius: 8px;
+    }
+  }
+} 
+
+
+// 위험도 임계값 관련 스타일
+.risk-info {
+  margin-bottom: 2rem;
+  padding: 1rem;
+  border: 1px solid #555;
+  border-radius: 8px;
+  background-color: #2c3e50;
+  text-align: left;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+
+  h4 {
+    margin-top: 0;
+    color: #ecf0f1;
+  }
+  p {
+    margin: 0.3rem 0;
+  }
+  .risk-high { color: #e74c3c; font-weight: bold; }
+  .risk-medium { color: #f39c12; font-weight: bold; }
+  .risk-low { color: #2ecc71; font-weight: bold; }
+  .risk-safe { color: #bdc3c7; font-weight: bold; }
+}
+
+.risk-slider-container {
+  margin-bottom: 1.5rem;
+  label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+  }
+  .risk-slider {
+    width: 100%;
+    max-width: 500px;
+  }
+}
