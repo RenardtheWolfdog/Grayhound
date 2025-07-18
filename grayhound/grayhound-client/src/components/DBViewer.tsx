@@ -24,6 +24,7 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
   const [dbList, setDbList] = useState<BloatwareItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("Initializing...");
+  const [newItemName, setNewItemName] = useState("");
 
   const ws = useRef<WebSocket | null>(null);
 
@@ -31,6 +32,8 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
   const handleBackendMessage = (payload: string) => {
     try {
       const output: BackendMessage = JSON.parse(payload);
+      const isFinalMessage = output.type === 'db_list' || output.type === 'error';
+
       if (output.type === 'db_list') {
         const formattedData = output.data.map((item: any) => ({
           ...item,
@@ -41,16 +44,40 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
         }));
         setDbList(formattedData);
         setStatus(`Total ${formattedData.length} items loaded.`);
-        setIsLoading(false);
       } else if (output.type === 'error') {
         setStatus(`Error: ${output.data}`);
-        setIsLoading(false);
       } else if (output.type === 'progress') {
         setStatus(output.data.status || output.data);
       }
+
+      // 최종 메시지(목록 수신 또는 에러)를 받으면 로딩 상태를 햐재
+      if (isFinalMessage || output.data?.includes("You can't add this item")) {
+        setIsLoading(false);
+      }
     } catch (e) {
         setStatus(payload); // JSON 파싱 실패 시 일반 로그로 처리 (예: Python의 print문)
+        setIsLoading(false);
     }
+  };
+
+  const handleAddNewItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = newItemName.trim();
+    if (!trimmedName) {
+      setStatus("Please enter a program name to add.");
+      return;
+    }
+    if (ws.current?.readyState !== WebSocket.OPEN) {
+      setStatus("Server is not connected.");
+      return;
+    }
+    setIsLoading(true);
+    setStatus(`Verifying and adding '${trimmedName}'...`);
+    ws.current.send(JSON.stringify({
+      command: "add_item_to_db",
+      args: [trimmedName]
+    }));
+    setNewItemName(""); // 입력 필드 초기화
   };
 
   useEffect(() => {
@@ -112,13 +139,28 @@ export const DBViewer = ({ setCurrentView }: DBViewerProps) => {
     <div className="container db-viewer">
       <h2>🗄️ View & Ignore DB</h2>
       <p>Check the items you want to ignore during a PC scan. Click 'Save Changes' to apply.</p>
+
+      <form onSubmit={handleAddNewItem} className="add-item-form">
+        <input
+          type="text"
+          value={newItemName}
+          onChange={(e) => setNewItemName(e.target.value)}
+          placeholder="Enter program name to add"
+          disabled={isLoading}
+        />
+        <button type="submit" disabled={isLoading || !newItemName.trim()}>
+          {isLoading ? "Processing..." : "Add & Verify New Item"}
+        </button>
+      </form>
+
       <div className="row">
         <button onClick={handleSaveChanges} disabled={isLoading}>Save Changes</button>
         <button onClick={fetchDbList} disabled={isLoading}>Refresh List</button>
         <button type="button" onClick={() => setCurrentView('dashboard')}>Back to Dashboard</button>
       </div>
       
-      {isLoading && <p>{status}</p>}
+      {/* 상태 메시지를 항상 표시하되, 오류 시 스타일을 다르게 적용 */}
+      <p className={`status-message ${status.toLowerCase().includes('error') ? 'error' : ''}`}>{status}</p>
       
       <table className="styled-table">
         <thead>

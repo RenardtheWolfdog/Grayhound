@@ -103,6 +103,73 @@ class ThreatIntelligenceCollector:
             logging.error(f"An unexpected error occurred during query generation: {e}")
             return {}
         
+    async def evaluate_single_program(self, program_name: str, progress_emitter: Optional[Callable[[str, Any], None]] = None) -> Optional[Dict[str, Any]]:
+        """(DB Viewer 상에서) 단일 프로그램명에 대한 구글 검색 및 LLM 평가를 수행하여 블로트웨어 여부를 판단"""
+        if not program_name:
+            return None
+        
+        if progress_emitter:
+            progress_emitter(f"Searching and evaluating '{mask_name(program_name)}'...", None)
+        
+        # 1. 구글 검색으로 정보 수집
+        search_query = f'"{program_name}"'
+        extracted_text = await asyncio.to_thread(
+            search_and_extract_text, [search_query], num_results_per_query=3
+        )
+        
+        if not extracted_text:
+            if progress_emitter:
+                progress_emitter(f"Could not find any information about '{mask_name(program_name)}' from the web.", "error")
+            return
+        
+        if progress_emitter:
+           progress_emitter(f"🤖 AI is analyzing the information about '{mask_name(program_name)}'...", None)
+        
+        # 2. LLM으로 평가
+        evaluation_prompt = f"""
+        Software Name: "{program_name}"
+        The following text was collected from web searches about this software:
+        ---
+        {extracted_text[:8000]}
+        ---
+        Please evaluate this software based on the text and provide a risk score and reason in a JSON object.
+        - `program_name`: The official name of the program.
+        - `risk_score`: An integer score from 0 to 10.
+          - 8-10: High-Risk Bloatware (adware, spyware, performance degradation). Strongly recommend removal.
+          - 4-7: Common Bloatware/PUP (unnecessary pre-installed software, resource-heavy security plugins). Recommended for removal.
+          - 0-3: Legitimate or Essential Software (drivers, system components, well-known applications). MUST NOT be classified as bloatware.
+        - `reason`: A brief, specific reason for the risk score based on the text.
+        - `generic_name`: A generic name for the program (e.g., "nProtect Online Security Service" -> "nprotect").
+
+        **CRITICAL**: If the text indicates the program is essential, a driver, or from a major reputable publisher (e.g., 'system32', 'windows', 'explorer.exe', 'svchost.exe', 'wininit.exe', 'lsass.exe', 'services.exe', 'smss.exe', 'csrss.exe', 'winlogon.exe', 'drivers', 'config', 'microsoft', 'nvidia', 'intel', 'amd', 'google', 'system volume information', '$recycle.bin', 'pagefile.sys', 'hiberfil.sys'), assign `risk_score` between 0 and 3. You never need to classify these as bloatware.
+
+        Return only the raw JSON object.
+        """
+        
+        eval_response_text = generate_text(evaluation_prompt, temperature=0.2)
+
+        try:
+            match = re.search(r'\{.*\}', eval_response_text, re.DOTALL)
+            if match:
+                evaluation_data = json.loads(match.group(0))
+                # 위험도 4점 이상인 경우에만 유효한 데이터로 간주
+                if evaluation_data.get("risk_score", 0) >= 4:
+                    evaluation_data["masked_name"] = mask_name(evaluation_data["program_name"])
+                    logging.info(f"-> Evaluation completed for '{program_name}': Risk Score {evaluation_data['risk_score']}")
+                    if progress_emitter:
+                        progress_emitter(f"✅ '{mask_name(program_name)}'이(가) 블로트웨어로 확인되었습니다 (위험도: {evaluation_data['risk_score']}).", "detail")
+                    return evaluation_data
+                else:
+                    logging.info(f"-> Program '{program_name}' is considered safe (Risk Score: {evaluation_data.get('risk_score', 0)}).")
+                    if progress_emitter:
+                        progress_emitter(f"ℹ️ '{mask_name(program_name)}'은(는) 블로트웨어가 아닌 것으로 판단됩니다.", "detail")
+                    return None
+        except (json.JSONDecodeError, AttributeError):
+            logging.error(f"Failed to parse evaluation for '{program_name}': {eval_response_text}")
+            if progress_emitter:
+                progress_emitter(f"❌ AI 분석 실패: '{mask_name(program_name)}'", "error")
+        return None
+
     async def scrape_community_info(self, search_queries: Dict[str, List[str]], progress_emitter: Optional[Callable[[str, Any], None]] = None):
         """커뮤니티와 포럼을 검색하여 블로트웨어 정보를 수집하고 AI로 평가 (콜백 추가)"""
         if not search_queries:
@@ -111,6 +178,8 @@ class ThreatIntelligenceCollector:
                 progress_emitter("No search queries provided. Aborting.", "error")
             return
         
+        # 1. 텍스트 추출: 커뮤니티 검색 쿼리를 사용하여 텍스트 추출
+        logging.info("Start extracting text from community websites...")
         known_bloatware_queries = search_queries.get("known_bloatware_queries", [])
         general_search_queries = search_queries.get("general_search_queries", [])
         all_queries = known_bloatware_queries + general_search_queries

@@ -175,6 +175,45 @@ async def save_ignore_list_workflow(websocket, ignore_list_json: str):
         logging.error(f"An error occurred during ignore list saving: {e}", exc_info=True)
         await emit_error(websocket, f"An unexpected error occurred during ignore list saving: {e}")
 
+# 🚫 DB 추가를 원천적으로 차단할 보호 키워드 목록 (만약의 사태를 위한 안전 장치)
+PROTECTED_KEYWORDS = [
+    'system32', 'windows', 'explorer.exe', 'svchost.exe', 'wininit.exe',
+    'lsass.exe', 'services.exe', 'smss.exe', 'csrss.exe', 'winlogon.exe',
+    'drivers', 'config', 'microsoft', 'nvidia', 'intel', 'amd', 'google',
+    'system volume information', '$recycle.bin', 'pagefile.sys', 'hiberfil.sys'
+]
+
+async def add_item_to_db_workflow(websocket, program_name: str):
+    """사용자가 요청한 프로그램을 검증하고 DB에 추가하는 워크플로우"""
+    try:
+        if not program_name or len(program_name) < 3:
+            await emit_error(websocket, "Invalid program name. Please provide a valid program name.")
+            return
+        
+        # 보호 키워드 목록에 포함되어 있는지 확인
+        if any(keyword in program_name.lower() for keyword in PROTECTED_KEYWORDS):
+            await emit_error(websocket, f"❌ '{program_name}' is a protected keyword and cannot be added to the database.")
+            logging.warning(f"❌ '{program_name}' is a protected keyword and cannot be added to the database.")
+            return
+        
+        collector = ThreatIntelligenceCollector()
+        
+        def progress_emitter_callback(status, details):
+            asyncio.create_task(emit_progress(websocket, status, details))
+        
+        evaluation_result = await collector.evaluate_single_program(program_name, progress_emitter=progress_emitter_callback)
+        
+        if evaluation_result: # AI가 블로트웨어로 '판단한 경우'에만 실행
+            await database.async_update_threats([evaluation_result])
+            await emit_progress(websocket, f"✅ '{mask_name(program_name)}' was successfully added to the database. Refreshing the list...")
+            await view_db_workflow(websocket) # 성공 후 최신 목록 전송
+        else: # 블로트웨어가 아니거나 평가 실패 시 실행
+            await emit_progress(websocket, f"❌ '{mask_name(program_name)}' is not a bloatware and cannot be added to the database.")
+
+    except Exception as e:
+        logging.error(f"An error occurred during program evaluation: {e}", exc_info=True)
+        await emit_error(websocket, f"An unexpected error occurred during program evaluation: {e}")        
+
 # --- WebSocket 메시지 핸들러 ---
 async def handler(websocket):
     """클라이언트와의 WebSocket 통신을 담당하는 메인 핸들러"""
@@ -212,6 +251,8 @@ async def handler(websocket):
                     await clean_pc_workflow(websocket, args[0] if args else "[]", language=language_arg)
                 elif command == "save_ignore_list":
                     await save_ignore_list_workflow(websocket, args[0] if args else "[]")
+                elif command == "add_item_to_db":
+                    await add_item_to_db_workflow(websocket, args[0] if args else "")
                 else:
                     logging.error(f"알 수 없는 명령 '{command}' 수신됨.")
                     await emit_error(websocket, f"알 수 없는 명령: {command}")
