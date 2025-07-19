@@ -4,9 +4,10 @@ import json
 import logging
 import sys
 import os
+import re
 import websockets
 
-from typing import Any
+from typing import Any, List, Dict
 
 # 스크립트가 실행되는 위치를 기준으로 상위 폴더의 경로를 추가
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -98,6 +99,36 @@ async def confirm_db_update_workflow(websocket, queries_json: str):
         logging.error(f"An error occurred during DB update: {e}", exc_info=True)
         await emit_error(websocket, f"An unexpected error occurred: {e}")
 
+def _mask_reason_in_db_list(threat_list: List[Dict]) -> List[Dict]:
+    """DB 목록에서 reason 필드에 포함된 프로그램명을 마스킹"""
+    for threat in threat_list:
+        reason = threat.get('reason', '')
+        program_name = threat.get('program_name', '')
+        generic_name = threat.get('generic_name', '')
+        
+        # 1. program_name 마스킹
+        if program_name:
+            escaped_name = re.escape(program_name)
+            reason = re.sub(
+                escaped_name,
+                mask_name(program_name),
+                reason,
+                flags=re.IGNORECASE
+            )
+        
+        # 2. generic_name이 존재하고, 다른 단어의 일부가 아닐 경우 마스킹
+        if generic_name and generic_name != program_name.lower():
+            # generic_name은 소문자이므로, 원본 reason에서 실제 매칭된 단어를 찾아 마스킹
+            generic_pattern = r'\b' + re.escape(generic_name) + r'\b'
+            matches = list(re.finditer(generic_pattern, reason, re.IGNORECASE))
+            for match in reversed(matches):
+                matched_word = match.group(0)
+                start, end = match.span()
+                reason = reason[:start] + mask_name(matched_word) + reason[end:]
+        
+        threat['reason'] = reason
+    return threat_list
+
 async def view_db_workflow(websocket):
     """DB 목록 조회 워크플로우"""
     try:
@@ -107,11 +138,14 @@ async def view_db_workflow(websocket):
             await emit_progress(websocket, "No bloatware found in the database. Please run the DB update first.")
             full_threat_list = [] # 클라이언트에서 null 대신 빈 배열을 받도록 함
         
-        await emit(websocket, "db_list", full_threat_list)
+        # DB 목록에서 reason 필드에 포함된 프로그램명을 마스킹
+        masked_threat_list = _mask_reason_in_db_list(full_threat_list) 
+        
+        await emit(websocket, "db_list", masked_threat_list)
     except Exception as e:
         logging.error(f"An error occurred while fetching DB: {e}", exc_info=True)
         await emit(websocket, "error", f"Failed to fetch database: {e}")
-
+       
 async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: int = 6):
     """PC 스캔 워크플로우"""
     try:

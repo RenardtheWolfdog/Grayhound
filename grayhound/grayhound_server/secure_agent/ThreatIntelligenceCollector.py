@@ -141,6 +141,9 @@ class ThreatIntelligenceCollector:
         - `reason`: A brief, specific reason for the risk score based on the text.
         - `generic_name`: A generic name for the program (e.g., "nProtect Online Security Service" -> "nprotect").
 
+        **REASON FIELD RULE**: In the 'reason' field, DO NOT repeat the program's name. Instead, use placeholders like '[This program]' or '[The software]'.
+        (Example: Instead of "nProtect is a security module...", write "[This program] is a security module...")
+
         **CRITICAL**: If the text indicates the program is essential, a driver, or from a major reputable publisher (e.g., 'system32', 'windows', 'explorer.exe', 'svchost.exe', 'wininit.exe', 'lsass.exe', 'services.exe', 'smss.exe', 'csrss.exe', 'winlogon.exe', 'drivers', 'config', 'microsoft', 'nvidia', 'intel', 'amd', 'google', 'system volume information', '$recycle.bin', 'pagefile.sys', 'hiberfil.sys'), assign `risk_score` between 0 and 3. You never need to classify these as bloatware.
 
         Return only the raw JSON object.
@@ -259,6 +262,10 @@ class ThreatIntelligenceCollector:
               - 0: Essential System Component (e.g., from Microsoft for Windows, critical drivers). MUST NOT be removed.
             - `reason`: A brief, specific reason for the risk score. (e.g., "A security module that consumes high resources.", "Adware that displays pop-up ads.", "Required driver component.")
             - `generic_name`: A generic name for the program. (e.g., "INISAFE Web v6.4" → "inisafe", "Delfino-x64" → "delfino", "AnySign For PC(32비트)" → "anysign", "Crosscert" → "crosscert", "nProtect Online Security Service(32비트)" → "nprotect")
+          
+            **REASON FIELD RULE**: In the 'reason' field, DO NOT repeat the program's name. Instead, use placeholders like '[This program]' or '[The software]'.
+            (Example: Instead of "nProtect is a security module...", write "[This program] is a security module...")
+          
             **CRITICAL**: If the program is a vital system component (e.g., from Microsoft, NVIDIA, Intel), assign `risk_score` = 0.
 
             Return only the JSON object.

@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import re
 from typing import List, Dict, Any, Optional
 
 # 다른 모듈에서 필요한 클래스 및 함수 임포트
@@ -89,7 +90,31 @@ class SecurityAgentManager:
                     
                     if current_risk >= risk_threshold:
                         base_reason = threat.get('reason', 'Included in known bloatware/grayware list.')
-                        masked_display_name = threat.get('masked_name', mask_name(db_program_name))
+                        
+                        reason_for_display = base_reason
+                        
+                        # A. DB의 program_name과 일치하는 문자열을 reason에서 찾아 마스킹
+                        # re.escape를 사용하여 특수 문자를 처리하고, re.IGNORECASE로 대소문자 무시
+                        escaped_db_name = re.escape(db_program_name)
+                        reason_for_display = re.sub(
+                            escaped_db_name,
+                            mask_name(db_program_name),
+                            reason_for_display,
+                            flags=re.IGNORECASE
+                        )
+                        
+                        # B. generic_name이 존재하고, 다른 단어의 일부가 아닐 경우에만 마스킹
+                        if generic_name and generic_name != db_program_name.lower():
+                               # \b는 단어 경계를 의미하여 독립된 단어만 찾음
+                            generic_pattern = r'\b' + re.escape(generic_name) + r'\b'
+                            
+                            # generic_name은 소문자이므로, 원본 reason에서 실제 매칭된 단어를 찾아 마스킹
+                            matches = list(re.finditer(generic_pattern, reason_for_display, re.IGNORECASE))
+                            # 뒤에서부터 변경해야 인덱스 순서가 꼬이지 않음
+                            for match in reversed(matches):
+                                matched_word = match.group(0)
+                                start, end = match.span()
+                                reason_for_display = reason_for_display[:start] + mask_name(matched_word) + reason_for_display[end:]
                         
                         # 실제 탐지된 이름과 DB의 이름이 다를 경우, 변종임을 명시
                         if program_name_lower != db_program_name.lower():
