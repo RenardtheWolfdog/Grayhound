@@ -135,7 +135,7 @@ This is the core of the application that the client connects to. (Administrator 
 python Grayhound_Websocket.py
 ```
 
-Terminal 3: Launch the Tauri Client
+- Terminal 3: Launch the Tauri Client
 This will open the desktop application UI.
 
 ```
@@ -158,10 +158,18 @@ npm run tauri dev
 ## ⚖️ Disclaimer
 This tool is designed to remove unwanted software but has the potential to delete important files if used improperly. The creators are not responsible for any damage to your system. Always review the list of programs to be removed before proceeding. Proceed with caution.
 
+### ⚠️ Disclaimer of Liability
+
+This software is distributed "AS IS" and with no warranties of any kind, whether express or implied. The user assumes all responsibility and risk for the use of this software.
+
+The program modifies system settings and removes files, which can potentially cause system instability, data loss, or conflicts with other software. The developers and contributors are not liable for any damages, including but not limited to direct, indirect, special, incidental, or consequential damages, arising out of the use or inability to use this software.
+
+The identification of a program as "bloatware" is based on AI-generated analysis of publicly available data and is provided for informational purposes only. It does not constitute a definitive statement on the utility or security of any given software.
+
+**By using this software, you agree that you are doing so at your own risk.** It is highly recommended to back up your important data before running this tool.
 
 ## 📄 License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 
 ## 🤝 Contributing
 Contributions are welcome! Please feel free to open an issue or submit a pull request. Consider creating a CONTRIBUTING.md file to outline the process for contributors.
