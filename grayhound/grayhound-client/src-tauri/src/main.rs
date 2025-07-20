@@ -4,6 +4,7 @@
     windows_subsystem = "windows"
 )]
 
+use grayhound_client_lib::run;
 // use tauri::{Emitter, Window};
 // use tauri_plugin_shell::ShellExt;
 
@@ -55,7 +56,8 @@
 // }
 
 fn main() {
-    tauri::Builder::default()
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    run();
+    // tauri::Builder::default()
+    //     .run(tauri::generate_context!())
+    //     .expect("error while running tauri application");
 }

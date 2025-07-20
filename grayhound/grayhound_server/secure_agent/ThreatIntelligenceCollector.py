@@ -13,6 +13,10 @@ from typing import List, Dict, Any, Callable, Optional
 from google_ai_client import generate_text
 from GoogleSearch_Grayhound import search_and_extract_text
 import database # 중앙 DB 관리 모듈 임포트
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import mask_name
 
 # --- 로깅 설정 ---

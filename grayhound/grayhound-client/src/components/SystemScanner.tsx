@@ -1,5 +1,6 @@
 // src/components/SystemScanner.tsx
 import { useState, useEffect, useRef } from 'react';
+// import { invoke } from '@tauri-apps/api/core'
 import './SystemScanner.scss';
 
 interface ScanResult {
@@ -14,8 +15,17 @@ interface ScanResult {
   clean: boolean; // 클라이언트에서 정리 여부를 관리하기 위한 상태
 }
 
+interface CleanupResult {
+  name: string;
+  masked_name: string;
+  guide_masked_name?: string; // 가이드 메시지에 쓰일 마스킹된 이름
+  path: string;
+  status: 'success' | 'failure';
+  message: string;
+}
+
 interface BackendMessage {
-  type: 'scan_result' | 'progress' | 'report' | 'error';
+  type: 'scan_result' | 'progress' | 'cleanup_complete' | 'error';
   data: any;
 }
 
@@ -32,11 +42,25 @@ const warnings = {
   zh: "⚠️ 重要：这可能会删除重要文件！如果删除错误的程序，您的系统或其他程序可能无法正常工作。对于可能出现的任何问题，创作者概不负责。您真的要继续吗？",
 };
 
+// ✨ 가이드 텍스트 다국어 지원
+const guideTexts = {
+  en: "Please go to 'Settings > Apps > Installed apps' to manually uninstall the programs listed below.",
+  ko: "'설정 > 앱 > 설치된 앱'으로 이동하여 아래 목록의 프로그램을 직접 제거하세요.",
+  ja: "「設定 > アプリ > インストールされているアプリ」に移動し、以下のリストにあるプログラムを手動でアンインストールしてください。",
+  zh: "请前往“设置 > 应用 > 安装的应用”，手动卸载下方列出的程序。",
+};
+
+// 정규식 특수문자를 이스케이프하는 헬퍼 함수
+// const escapeRegExp = (str: string) => {
+//   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// };
+
 export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) => {
   const [step, setStep] = useState('idle'); // 'idle', 'scanning', 'results', 'cleaning', 'report', 'error'
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [finalReport, setFinalReport] = useState("");
+  const [cleanupResults, setCleanupResults] = useState<CleanupResult[]>([]);
   const [error, setError] = useState("");
   const [riskThreshold, setRiskThreshold] = useState(6); // 위험도 임계값 상태
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -71,11 +95,12 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
             const status = typeof data === 'object' && data !== null && data.status ? data.status : data;
             setProgressLog(prev => [...prev, `[INFO] ${status}`]);
             break;
-        case 'report':
-            setFinalReport(data);
-            setProgressLog(prev => [...prev, '📋 Cleaning complete. See the final report.']);
-            setStep('report');
-            break;
+        case 'cleanup_complete':
+              setFinalReport(data.llm_feedback);
+              setCleanupResults(data.results); // 구조화된 결과 저장
+              setProgressLog(prev => [...prev, '📋 Cleaning complete. See the final report.']);
+              setStep('report');
+              break;
         case 'error':
             setError(data);
             setStep('error');
@@ -146,6 +171,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     }
     setStep('cleaning');
     setProgressLog(prev => [...prev, `🧹 Starting to clean ${itemsToClean.length} items...`]);
+
     // clean 요청 시 language도 함께 전달
     ws.current.send(JSON.stringify({ 
       command: "clean", 
@@ -181,16 +207,24 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     <div className="results-container">
         <h4>Scan Results</h4>
         <div className="results-list">
-            {scanResults.map(item => (
-                <div key={item.id} className="result-item">
-                    <input type="checkbox" id={`clean-${item.id}`} checked={!!item.clean} onChange={() => toggleClean(item.id)} />
-                    <label htmlFor={`clean-${item.id}`}>
-                        <strong>{item.masked_name}</strong> (Risk: {item.risk_score})
-                        <span className="reason">{item.reason}</span>
-                        <code className="path">{item.path}</code>
-                    </label>
-                </div>
-            ))}
+        {scanResults.map(item => {
+                // 경로 마스킹 로직
+                // const maskedPath = item.path && item.path !== 'N/A'
+                //     ? item.path.replace(new RegExp(escapeRegExp(item.name), 'gi'), item.masked_name)
+                //     : item.path;
+
+                return (
+                    <div key={item.id} className="result-item">
+                        <input type="checkbox" id={`clean-${item.id}`} checked={!!item.clean} onChange={() => toggleClean(item.id)} />
+                        <label htmlFor={`clean-${item.id}`}>
+                            <strong>{item.masked_name}</strong> (Risk: {item.risk_score})
+                            <span className="reason">{item.reason}</span>
+                            {/* 마스킹된 경로를 표시 */}
+                            {/* <code className="path">{maskedPath}</code> */}
+                        </label>
+                    </div>
+                );
+            })}
         </div>
         <div className="row">
             <button onClick={handleClean} disabled={scanResults.filter(i => i.clean).length === 0}>Clean Selected Items</button>
@@ -200,14 +234,37 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     </div>
   );
 
-  const renderReport = () => (
+  const renderReport = () => {
+    const trulyFailedItems = cleanupResults.filter(item => item.status === 'failure');
+
+    return (
       <div className="report-box">
           <h3>Final Report</h3>
           <pre>{finalReport}</pre>
+
+          {/*--- 수동 제거 가이드 ---*/}
+          {trulyFailedItems.length > 0 && (
+            <div className="manual-cleanup-guide">
+              <h4>Manual Cleanup Guide</h4>
+              {/* 다국어 텍스트 표시 */}
+              <p>{guideTexts[language as keyof typeof guideTexts] || guideTexts['en']}</p>
+              
+              <ul>
+                {trulyFailedItems.map(item => (
+                  <li key={item.name}>
+                    {/* 새로운 마스킹 이름(guide_masked_name) 사용, 없으면 기존 masked_name 사용 */}
+                    <span>{item.guide_masked_name || item.masked_name}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <button type="button" onClick={handleScan}>Scan Again</button>
           <button type="button" onClick={() => handleBackToDashboard()}>Back to Dashboard</button>
       </div>
-  );
+    );
+  }
 
   const renderError = () => (
       <div className="error-container">

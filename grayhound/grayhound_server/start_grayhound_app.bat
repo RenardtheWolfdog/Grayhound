@@ -6,9 +6,9 @@ title Grayhound Launcher
 :: 배치 파일이 있는 디렉토리(grayhound_server)로 이동하여 경로 문제를 방지
 cd /d "%~dp0"
 
-echo [1/4] Starting Local System Agent (Optimizer.py)...
-rem /c 옵션: Python 스크립트 실행 후 창이 자동으로 닫힙니다. (디버깅 시에는 /k 사용)
-START "Grayhound Local Agent" cmd /c python secure_agent\Optimizer.py
+echo [1/4] Starting Local System Agent (Optimizer.py) with Administrator Privileges...
+:: PowerShell을 이용해 Optimizer.py만 관리자 권한으로 실행합니다.
+powershell -Command "Start-Process python 'secure_agent\Optimizer.py' -Verb RunAs -WorkingDirectory '%~dp0'"
 
 echo [2/4] Starting Main WebSocket Server (Grayhound_Websocket.py)...
 rem 메인 서버를 실행합니다. 클라이언트는 이 서버에 접속합니다.

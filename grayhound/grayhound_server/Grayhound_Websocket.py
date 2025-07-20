@@ -188,8 +188,10 @@ async def clean_pc_workflow(websocket, items_to_clean_json: str, language: str =
             return
 
         # 정리 결과와 LLM 리포트를 클라이언트로 전송
-        await emit_progress(websocket, "✨ Cleaning process completed.", cleanup_result.get("results"))
-        await emit(websocket, "report", cleanup_result.get("llm_feedback", "Report generation failed."))
+        await emit(websocket, "cleanup_complete", {
+            "results": cleanup_result.get("results", []),
+            "llm_feedback": cleanup_result.get("llm_feedback", "Report generation failed.")
+        })
 
     except json.JSONDecodeError as e:
         await emit_error(websocket, "Invalid item list format received for cleaning.")

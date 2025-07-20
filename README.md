@@ -97,10 +97,28 @@ npm install
 
 ## ▶️ Running the Application
 
-You must start the components in the correct order for the application to function properly. Run each command in a separate terminal.
+There are two ways to run Grayhound: using the convenient batch file or running each component manually.
 
-Terminal 1: Start the Local System Agent
-This agent listens for commands from the main server to scan your local machine.
+### Method 1: Run with the Batch File (Recommended)
+The easiest way to start the application is by using the 'start_grayhound_app.bat' file located in the grayhound_server folder. It launches all necessary server components in the correct order and starts the Tauri client.
+
+Navigate to the grayhound_server directory.
+
+Right-click on start_grayhound_app.bat and select "Run as administrator".
+
+⚠️ Important: You must run the application as an administrator because the Optimizer.py agent needs elevated privileges to modify the registry and perform other system-level tasks. Failure to do so may result in the unsuccessful removal of some programs.
+
+### Method 2: Manual Startup
+For development or debugging, you can run each component in a separate terminal.
+
+- Terminal 1: Start the Local System Agent (as Administrator)
+This agent requires elevated privileges to uninstall programs and modify the registry.
+
+Open Command Prompt (cmd) or PowerShell as an Administrator.
+
+Navigate to the grayhound_server directory and activate the grayhound conda environment.
+
+Run the following command:
 
 ```
 # Make sure you are in the grayhound_server directory
@@ -108,8 +126,8 @@ This agent listens for commands from the main server to scan your local machine.
 python secure_agent/Optimizer.py
 ```
 
-Terminal 2: Start the Main WebSocket Server
-This is the core of the application that the client connects to.
+- Terminal 2: Start the Main WebSocket Server
+This is the core of the application that the client connects to. (Administrator rights are not required here).
 
 ```
 # Make sure you are in the grayhound_server directory
@@ -118,7 +136,7 @@ python Grayhound_Websocket.py
 ```
 
 Terminal 3: Launch the Tauri Client
-This will open the desktop application.
+This will open the desktop application UI.
 
 ```
 # Make sure you are in the grayhound-client directory

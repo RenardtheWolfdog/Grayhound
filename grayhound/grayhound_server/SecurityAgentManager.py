@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 import database
 from agent_client import OptimizerAgentClient
 from google_ai_client import generate_text
-from utils import mask_name
+from utils import mask_name, mask_name_for_guide
 
 class SecurityAgentManager:
     """Grayhound의 전체 워크플로를 관리하고 오케스트레이션하는 클래스"""
@@ -157,8 +157,10 @@ class SecurityAgentManager:
             for res in agent_results:
                 original_name = res.get("name")
                 res["masked_name"] = name_to_masked_name.get(original_name, mask_name(original_name))
+                # 가이드를 위한 별도의 마스킹 이름 추가
+                res["guide_masked_name"] = mask_name_for_guide(original_name) # 가이드 목록에 표시될 마스킹 이름
                 comprehensive_results.append(res)
-
+                
             # LLM 피드백 생성 (언어 설정 전달)
             llm_feedback = await self._generate_llm_feedback(comprehensive_results, language)
 
@@ -183,36 +185,36 @@ class SecurityAgentManager:
         prompts = {
             'ko': f"""
             PC 최적화 작업 'Grayhound'가 방금 완료되었습니다.
-            - 성공적으로 제거한 프로그램: {', '.join(successful_items) if successful_items else '없음'}
-            - 제거에 실패한 프로그램: {', '.join(failed_items) if failed_items else '없음'}
+            - 성공적으로 제거한 블로트웨어 프로그램: {', '.join(successful_items) if successful_items else '없음'}
+            - 제거에 실패한 블로트웨어 프로그램: {', '.join(failed_items) if failed_items else '없음'}
 
             이 결과를 바탕으로, 사용자에게 작업 완료를 알리는 친절하고 명확한 리포트를 작성해주세요.
             성공과 실패 여부를 명확히 구분해서 알려주고, 전반적으로 PC가 더 쾌적해졌을 것이라는 긍정적인 메시지를 전달해주세요.
             캐릭터 없이, 전문적이고 간결한 톤으로 작성해주세요.
             
-            **중요: 반드시 한국어로 리포트를 작성해주세요.**
+            **중요: 반드시 한국어로 리포트를 작성해주세요. 작업 날짜와 시간은 기입하지 마세요.**
             """,
             'en': f"""
             The PC optimization task 'Grayhound' has just completed.
-            - Successfully removed programs: {', '.join(successful_items) if successful_items else 'None'}
-            - Failed to remove programs: {', '.join(failed_items) if failed_items else 'None'}
+            - Successfully removed bloatware programs: {', '.join(successful_items) if successful_items else 'None'}
+            - Failed to remove bloatware programs: {', '.join(failed_items) if failed_items else 'None'}
 
             Based on this, write a friendly and clear report for the user informing them of the completion.
             Clearly distinguish between success and failure, and convey a positive message that their PC should now be cleaner and faster.
             Write in a professional and concise tone, without any specific character persona.
 
-            **IMPORTANT: Please write the report in English.**
+            **IMPORTANT: Please write the report in English. Do not include the date and time of the task.**
             """,
             'ja': f"""
             PC 最適化タスク 'Grayhound' が完了しました。
-            - 正常に削除されたプログラム: {', '.join(successful_items) if successful_items else 'なし'}
-            - 削除に失敗したプログラム: {', '.join(failed_items) if failed_items else 'なし'}
+            - 正常に削除されたブロットウェア プログラム: {', '.join(successful_items) if successful_items else 'なし'}
+            - 削除に失敗したブロットウェア プログラム: {', '.join(failed_items) if failed_items else 'なし'}
             
             この結果をもとに、ユーザーに対して完了を通知する親切で明確なレポートを作成してください。
             成功と失敗を明確に区別し、PCがよりクリーンで高速になったことを伝える肯定的なメッセージを伝えてください。
             専門的で簡潔なトーンで、特定のキャラクターのパーソナリティを持たないように書いてください。
             
-            **重要: 必ず日本語でレポートを作成してください。**
+            **重要: 必ず日本語でレポートを作成してください。 タスクの日付と時刻は含めないでください。**
             """,
             'zh': f"""
             PC 优化任务 'Grayhound' 刚刚完成。
@@ -223,7 +225,7 @@ class SecurityAgentManager:
             報告應清楚區分成功和失敗，並傳達正面的訊息，告知使用者電腦現在應該更乾淨、更快速。
             報告應使用專業簡潔的語氣，避免任何特定的人物角色。
             
-            **重要：请务必用中文撰写报告。**
+            **重要：请务必用中文撰写报告。 请勿包含任务的日期和时间。**
             """
         }
         
