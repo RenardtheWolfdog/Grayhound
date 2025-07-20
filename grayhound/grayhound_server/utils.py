@@ -1,6 +1,7 @@
 # grayhound_server/utils.py
 import random
 import math
+import re
 
 def mask_word(word: str, ratio: float = 0.5) -> str:
     """
@@ -42,29 +43,56 @@ def mask_name(name: str) -> str:
     if not isinstance(name, str) or not name:
         return name
         
-    # 공백과 점을 모두 구분자로 사용하여 단어 분리
-    words = []
-    for part in name.split(' '):
-        words.extend(part.split('.'))
-    
-    masked_words = [mask_word(word) for word in words if word]  # 빈 문자열 제외
-    return ' '.join(masked_words)
+    # Split by delimiters but keep them in the list to preserve the original structure
+    parts = re.split(r'([ .()])', name)
+    masked_parts = [mask_word(part) if part.isalnum() else part for part in parts if part]
+    return "".join(masked_parts)
 
 def mask_name_for_guide(name: str) -> str:
     """Manual Cleanup Guide를 위해 35% 비율로 마스킹합니다."""
     if not isinstance(name, str) or not name:
         return name
     # 공백과 점을 모두 구분자로 사용하여 단어 분리
-    words = []
-    for part in name.split(' '):
-        words.extend(part.split('.'))
-    
     # 35% 비율로 마스킹하도록 ratio 전달
-    masked_words = [mask_word(word, ratio=0.35) for word in words if word]  # 빈 문자열 제외
-    return ' '.join(masked_words)
+    parts = re.split(r'([ .()])', name)
+    masked_parts = [mask_word(part, ratio=0.35) if part.isalnum() else part for part in parts if part]
+    return "".join(masked_parts)
+
+def enhanced_mask_name(full_name: str, generic_name: str) -> str:
+    """
+    full_name에서 generic_name을 찾아 마스킹하고, 나머지 부분은 기존 mask_name 함수를 사용하여 마스킹합니다.
+    """
+    if not all([isinstance(full_name, str), full_name, isinstance(generic_name, str), generic_name]):
+        return mask_name(full_name)  # Fallback to the original function
+
+    try:
+        # Find the generic_name within the full_name (case-insensitive)
+        match = re.search(re.escape(generic_name), full_name, re.IGNORECASE)
+        
+        if not match:
+            return mask_name(full_name) # If not found, use the default masking
+
+        start, end = match.span()
+        matched_generic_part = full_name[start:end]
+        
+        # Mask the found generic part more aggressively
+        masked_generic = mask_word(matched_generic_part, ratio=0.8) 
+        
+        # Mask the prefix and suffix parts separately
+        prefix = full_name[:start]
+        suffix = full_name[end:]
+        
+        masked_prefix = mask_name(prefix)
+        masked_suffix = mask_name(suffix)
+
+        return masked_prefix + masked_generic + masked_suffix
+
+    except Exception:
+        # Fallback safely in case of any regex or other errors
+        return mask_name(full_name)
 
 if __name__ == '__main__':
-    test_names = ["nProtect Online Security", "AhnLab Safe Transaction", "Glary Utilities", "Defraggler", "INISAFE", "Delfino x86", "abc def.exe", "vzd"]
+    test_names = ["nProtect Online Security", "AhnLab Safe Transaction", "Glary Utilities", "Defraggler", "INISAFE", "Delfino x86", "abc def.exe", "THEABCDEFGSAFE.exe" "vzd"]
     for name in test_names:
         print(f'"{name}" -> "{mask_name(name)}"')
         print(f'"{name}" -> "{mask_name_for_guide(name)}"')

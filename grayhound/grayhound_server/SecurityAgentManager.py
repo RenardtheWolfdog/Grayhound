@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 import database
 from agent_client import OptimizerAgentClient
 from google_ai_client import generate_text
-from utils import mask_name, mask_name_for_guide
+from utils import mask_name, mask_name_for_guide, enhanced_mask_name
 
 class SecurityAgentManager:
     """Grayhound의 전체 워크플로를 관리하고 오케스트레이션하는 클래스"""
@@ -123,7 +123,7 @@ class SecurityAgentManager:
                             reason_for_display = base_reason
                         threat_details = {
                             "name": program_name, # 실제 PC에서 발견된 프로그램 이름
-                            "masked_name": mask_name(program_name), # 스캔 결과에도 마스킹된 이름을 추가
+                            "masked_name": enhanced_mask_name(program_name, generic_name), # 스캔 결과에 강화된 마스킹 이름을 추가
                             "reason": reason_for_display, # 위협 사유 (변종 여부 포함)
                             "risk_score": current_risk, # DB 기반 위험도
                             "path": program.get('install_location') or program.get('path', 'N/A'),

@@ -56,7 +56,9 @@ class ThreatIntelligenceCollector:
         **Final Output Instruction:**
         Return ONLY the raw JSON object. Do not wrap it in markdown or add any other text.
 
-        Example for "South Korea" and "Windows 11":
+        --- EXAMPLES ---
+
+        **Example for "South Korea" and "Windows 11":**
         {{
             "known_bloatware_queries": [
                 "nProtect Online Security", "AhnLab Safe Transaction", "Wizvera Veraport", "AnySign4PC", 
@@ -67,9 +69,53 @@ class ThreatIntelligenceCollector:
             ],
             "general_search_queries": [
                 "\\"윈도우 11 삭제해도 되는 프로그램\\" site:quasarzone.com", 
-                "\\"윈도우 11 클린 설치 후 필수 프로그램\\" site:tistory.com", 
-                "\\"windows 11 debloat script\\" site:github.com", 
-                "\\"windows 11 debloat list\\" site:reddit.com"
+                "\\"windows 11 debloat script\\" site:github.com",
+                "\\"윈도우 11 삭제해도 되는 프로그램\\" site:tistory.com",
+                "\\"windows 11 bloatware list\\" site:reddit.com"
+            ]
+        }}
+
+        **Example for "USA" and "Windows 11":**
+        {{
+            "known_bloatware_queries": ["McAfee WebAdvisor", "Norton Security", "CCleaner", "BonziBuddy", "WeatherBug", "MyWebSearch", "Ask Toolbar"],
+            "general_search_queries": [
+                "\\"windows 11 remove bloatware\\" site:reddit.com",
+                "\\"pre-installed apps to uninstall windows 11\\" site:howtogeek.com",
+                "\\"windows 11 debloat script\\" site:github.com",
+                "\\"best pc cleaner\\" site:pcmag.com"
+            ]
+        }}
+
+        **Example for "Japan" and "Windows 11":**
+        {{
+            "known_bloatware_queries": ["Baidu IME", "Hao 123", "RegClean Pro", "KINGSOFT Internet Security", "WinZip Driver Updater", "マカフィー リブセーフ (McAfee LiveSafe)"],
+            "general_search_queries": [
+                "\\"windows 11 不要なプリインストールソフト\\" site:hatenablog.com",
+                "\\"windows 11 削除してはいけないプログラム\\" site:yahoo.co.jp",
+                "\\"windows 11 デブロット\\" site:github.com",
+                "\\"PC 高速化\\" site:pc.watch.impress.co.jp"
+            ]
+        }}
+
+        **Example for "China" and "Windows 11":**
+        {{
+            "known_bloatware_queries": ["Baidu Antivirus (百度杀毒)", "360 Total Security (360安全卫士)", "Kingsoft PC Doctor (金山毒霸)", "Tencent PC Manager (腾讯电脑管家)", "2345.com", "Hao123"],
+            "general_search_queries": [
+                "\\"windows 11 预装软件卸载\\" site:zhihu.com",
+                "\\"win11 精简 脚本\\" site:gitee.com",
+                "\\"可以卸载的windows程序\\" site:v2ex.com",
+                "\\"windows 11 C盘清理\\" site:weibo.com"
+            ]
+        }}
+
+        **Example for "India" and "Windows 11":**
+        {{
+            "known_bloatware_queries": ["Glary Utilities", "Advanced SystemCare", "Driver Booster", "Hola VPN", "MAPit", "AppLock"],
+            "general_search_queries": [
+                "\\"windows 11 bloatware to remove india\\" site:reddit.com",
+                "\\"how to speed up windows 11 laptop\\" site:gadgets360.com",
+                "\\"debloat windows 11 script\\" site:github.com",
+                "\\"best free pc optimizer india\\" site:digit.in"
             ]
         }}
         """
