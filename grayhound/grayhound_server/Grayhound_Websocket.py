@@ -146,7 +146,7 @@ async def view_db_workflow(websocket):
         logging.error(f"An error occurred while fetching DB: {e}", exc_info=True)
         await emit(websocket, "error", f"Failed to fetch database: {e}")
        
-async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: int = 6):
+async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: int = 4):
     """PC 스캔 워크플로우"""
     try:
         ignored_names = json.loads(ignored_names_json)
@@ -240,9 +240,11 @@ async def add_item_to_db_workflow(websocket, program_name: str):
         evaluation_result = await collector.evaluate_single_program(program_name, progress_emitter=progress_emitter_callback)
         
         if evaluation_result: # AI가 블로트웨어로 '판단한 경우'에만 실행
-            await database.async_update_threats([evaluation_result])
+            await database.async_add_threat(evaluation_result)
             await emit_progress(websocket, f"✅ '{mask_name(program_name)}' was successfully added to the database. Refreshing the list...")
             await view_db_workflow(websocket) # 성공 후 최신 목록 전송
+        elif evaluation_result == "DUPLICATE":
+            await emit_progress(websocket, f"❌ '{mask_name(program_name)}' is already in the database.")
         else: # 블로트웨어가 아니거나 평가 실패 시 실행
             await emit_progress(websocket, f"❌ '{mask_name(program_name)}' is not a bloatware and cannot be added to the database.")
 

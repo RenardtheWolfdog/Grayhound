@@ -1,5 +1,5 @@
 # secure_agent/ThreatIntelligenceCollector.py
-# Grayhound's Automated Threat Intelligence Collector Module
+# Grayhound's Two-Phase Threat Intelligence Collector Module
 
 import json
 import logging
@@ -28,9 +28,38 @@ logging.basicConfig(
 
 class ThreatIntelligenceCollector:
     """외부 정보원으로부터 위협 인텔리전스를 수집, 분석하고 DB에 저장"""
+    """Two-Phase 위협 인텔리전스 수집기: 1차 기본정보 수집 → 2차 상세정보 보강"""
+
+    def _extract_brand_keywords(self, program_name: str, publisher: str = "") -> List[str]:
+        """프로그램명과 게시자명에서 브랜드 키워드를 추출"""
+        keywords = set()
+        
+        # 프로그램명에서 키워드 추출
+        if program_name:
+            # 공백, 하이픈, 언더스코어로 분리
+            words = re.split(r'[\s\-_]+', program_name.lower())
+            for word in words:
+                # 버전 번호, 비트 정보 제거
+                clean_word = re.sub(r'(x86|x64|32bit|64bit|32비트|64비트|v?\d+\.?\d*)', '', word)
+                if len(clean_word) >= 3:  # 3글자 이상만 키워드로 사용
+                    keywords.add(clean_word)
+        
+        # 게시자명에서 키워드 추출
+        if publisher:
+            pub_words = re.split(r'[\s\-_\.]+', publisher.lower())
+            for word in pub_words:
+                clean_word = re.sub(r'(inc|corp|corporation|ltd|limited|co|company)', '', word)
+                if len(clean_word) >= 3:
+                    keywords.add(clean_word)
+        
+        # 불용어 제거
+        stopwords = {'the', 'and', 'for', 'with', 'software', 'program', 'application', 'app', 'tool', 'suite', 'service', 'system', 'windows', 'microsoft'}
+        keywords = keywords - stopwords
+        
+        return list(keywords)
 
     async def generate_dynamic_queries(self, country: str, os_type: str) -> Dict[str, List[str]]:
-        """사용자 입력을 기반으로 LLM을 사용하여 동적 쿼리를 생성"""
+        """1단계: 사용자 입력을 기반으로 LLM을 사용하여 동적 쿼리를 생성"""
         logging.info(f"'{country}'의 '{os_type}' 환경에 맞는 동적 쿼리 생성을 시작합니다.")
         
         prompt = f"""
@@ -65,7 +94,7 @@ class ThreatIntelligenceCollector:
                 "Crosscert", "CrosscertWeb", "Delfino-x64", "Delfino-x86", "Delfino", "EasyKeytec", 
                 "elSP 1.0", "inLINE CrossEx Service", "INISAFE CrossWeb EX", "INISAFE Sandbox", 
                 "INISAFE Web", "IPinside LWS Agent", "MarkAny", "Maeps", "MagicLineNP", 
-                "SignKorea", "Touchen", "TDSvc", "UbiKey", "VestCert", "XecureWeb"
+                "SignKorea", "Touchen", "TDSvc", "UbiKey", "VestCert", "XecureWeb", "Alyac", "Altools", "ESTsoft", "McAfee", "Norton"
             ],
             "general_search_queries": [
                 "\\"윈도우 11 삭제해도 되는 프로그램\\" site:quasarzone.com", 
@@ -153,6 +182,79 @@ class ThreatIntelligenceCollector:
             logging.error(f"An unexpected error occurred during query generation: {e}")
             return {}
         
+    async def _enhance_threat_metadata(self, basic_threat_data: Dict[str, Any]) -> Dict[str, Any]:
+        """2단계: 기본 정보를 보강하여 위협 메타데이터 생성"""
+        program_name = basic_threat_data['program_name']
+        
+        if not program_name:
+            return basic_threat_data
+        
+        logging.info(f"Enhancing metadata for '{program_name}'...")
+        
+        # 상세 정보 수집을 위한 프롬프트
+        enhancement_prompt = f"""
+        Software Name: "{program_name}"
+        Current Basic Info: {json.dumps(basic_threat_data, ensure_ascii=False)}
+
+        Please enhance this bloatware/PUP information with additional metadata. Based on your knowledge of this software, provide the following additional fields:
+
+        **Required Additional Fields:**
+        - `publisher`: The publisher/company name (if known, otherwise leave empty)
+        - `brand_keywords`: An array of 2-4 brand-related keywords that could help identify variants of this software
+        - `alternative_names`: An array of alternative names or variants (if known, otherwise leave empty)
+        - `process_names`: Likely process names (educated guess based on program name, e.g., "alyac.exe,alyacservice.exe")
+
+        **BRAND KEYWORDS RULE**: Extract 2-4 distinctive keywords that represent the brand/company. For example:
+        - "ALYAC" -> ["alyac", "estsoft"] (if you know ESTsoft is the publisher)
+        - "CCleaner" -> ["ccleaner", "piriform"]
+        - "Norton Security" -> ["norton", "symantec"]
+
+        **PROCESS NAMES RULE**: Generate educated guesses for likely process names:
+        - Use the generic name + .exe
+        - Add common variations like service, gui, updater
+        - Example: "alyac" -> "alyac.exe,alyacservice.exe,alyacgui.exe"
+
+        **IMPORTANT**: If you don't know specific information, leave those fields empty rather than guessing incorrectly.
+
+        Return the COMPLETE enhanced JSON object with all original fields plus the new fields.
+
+        Example:
+        {{
+            "program_name": "ALYAC",
+            "risk_score": 4,
+            "reason": "[This program] is a Korean antivirus that consumes high system resources and is often pre-installed.",
+            "generic_name": "alyac",
+            "publisher": "ESTsoft",
+            "brand_keywords": ["alyac", "estsoft"],
+            "alternative_names": ["ALYAC Internet Security", "알약"],
+            "process_names": "alyac.exe,alyacservice.exe,alyacgui.exe"
+        }}
+        """
+        
+        response_text = generate_text(enhancement_prompt, temperature=0.1)
+        
+        try:
+            match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if match:
+                enhanced_data = json.loads(match.group(0))
+                
+                # 브랜드 키워드가 없거나 비어있으면 자동 생성
+                if not enhanced_data.get("brand_keywords"):
+                    enhanced_data["brand_keywords"] = self._extract_brand_keywords(
+                        enhanced_data.get("program_name", ""), 
+                        enhanced_data.get("publisher", "")
+                    )
+                
+                logging.info(f"Successfully enhanced metadata for '{program_name}'")
+                return enhanced_data
+            else:
+                logging.warning(f"Could not enhance metadata for '{program_name}'. Using basic data.")
+                return basic_threat_data
+                
+        except (json.JSONDecodeError, AttributeError) as e:
+            logging.error(f"Failed to parse enhanced metadata for '{program_name}': {e}")
+            return basic_threat_data        
+        
     async def evaluate_single_program(self, program_name: str, progress_emitter: Optional[Callable[[str, Any], None]] = None) -> Optional[Dict[str, Any]]:
         """(DB Viewer 상에서) 단일 프로그램명에 대한 구글 검색 및 LLM 평가를 수행하여 블로트웨어 여부를 판단"""
         if not program_name:
@@ -175,8 +277,8 @@ class ThreatIntelligenceCollector:
         if progress_emitter:
            progress_emitter(f"🤖 AI is analyzing the information about '{mask_name(program_name)}'...", None)
         
-        # 2. LLM으로 평가
-        evaluation_prompt = f"""
+        # 2. 1차 기본 평가
+        basic_evaluation_prompt = f"""
         Software Name: "{program_name}"
         The following text was collected from web searches about this software:
         ---
@@ -192,39 +294,46 @@ class ThreatIntelligenceCollector:
         - `generic_name`: A generic name for the program (e.g., "nProtect Online Security Service" -> "nprotect").
 
         **REASON FIELD RULE**: In the 'reason' field, DO NOT repeat the program's name. Instead, use placeholders like '[This program]' or '[The software]'.
-        (Example: Instead of "nProtect is a security module...", write "[This program] is a security module...")
 
-        **CRITICAL**: If the text indicates the program is essential, a driver, or from a major reputable publisher (e.g., 'system32', 'windows', 'explorer.exe', 'svchost.exe', 'wininit.exe', 'lsass.exe', 'services.exe', 'smss.exe', 'csrss.exe', 'winlogon.exe', 'drivers', 'config', 'microsoft', 'nvidia', 'intel', 'amd', 'google', 'system volume information', '$recycle.bin', 'pagefile.sys', 'hiberfil.sys'), assign `risk_score` between 0 and 3. You never need to classify these as bloatware.
+        **CRITICAL**: If the text indicates the program is essential, a driver, or from a major reputable publisher, assign `risk_score` between 0 and 3.
 
         Return only the raw JSON object.
         """
         
-        eval_response_text = generate_text(evaluation_prompt, temperature=0.2)
+        eval_response_text = generate_text(basic_evaluation_prompt, temperature=0.2)
 
         try:
             match = re.search(r'\{.*\}', eval_response_text, re.DOTALL)
             if match:
-                evaluation_data = json.loads(match.group(0))
-                # 위험도 4점 이상인 경우에만 유효한 데이터로 간주
-                if evaluation_data.get("risk_score", 0) >= 4:
-                    evaluation_data["masked_name"] = mask_name(evaluation_data["program_name"])
-                    logging.info(f"-> Evaluation completed for '{program_name}': Risk Score {evaluation_data['risk_score']}")
+                basic_evaluation_data = json.loads(match.group(0))
+                
+                # 위험도 4점 이상인 경우에만 진행
+                if basic_evaluation_data.get("risk_score", 0) >= 4:
+                    # 3. 2차 메타데이터 보강
                     if progress_emitter:
-                        progress_emitter(f"✅ '{mask_name(program_name)}'이(가) 블로트웨어로 확인되었습니다 (위험도: {evaluation_data['risk_score']}).", "detail")
-                    return evaluation_data
+                        progress_emitter(f"🔍 Enhancing metadata for '{mask_name(program_name)}'...", None)
+                    
+                    enhanced_data = await self._enhance_threat_metadata(basic_evaluation_data)
+                    enhanced_data["masked_name"] = mask_name(enhanced_data["program_name"])
+                    
+                    logging.info(f"-> Enhanced evaluation completed for '{mask_name(program_name)}': Risk Score {enhanced_data['risk_score']}")
+                    if progress_emitter:
+                        progress_emitter(f"✅ '{mask_name(program_name)}' is considered as bloatware (Risk Score: {enhanced_data['risk_score']}).", "detail")
+                    return enhanced_data
                 else:
-                    logging.info(f"-> Program '{program_name}' is considered safe (Risk Score: {evaluation_data.get('risk_score', 0)}).")
+                    logging.info(f"-> Program '{program_name}' is considered safe (Risk Score: {basic_evaluation_data.get('risk_score', 0)}).")
                     if progress_emitter:
-                        progress_emitter(f"ℹ️ '{mask_name(program_name)}'은(는) 블로트웨어가 아닌 것으로 판단됩니다.", "detail")
+                        progress_emitter(f"ℹ️ '{mask_name(program_name)}' is considered as safe.", "detail")
                     return None
         except (json.JSONDecodeError, AttributeError):
             logging.error(f"Failed to parse evaluation for '{program_name}': {eval_response_text}")
             if progress_emitter:
-                progress_emitter(f"❌ AI 분석 실패: '{mask_name(program_name)}'", "error")
+                progress_emitter(f"❌ AI analysis failed for '{mask_name(program_name)}'", "error")
         return None
-
+    
     async def scrape_community_info(self, search_queries: Dict[str, List[str]], progress_emitter: Optional[Callable[[str, Any], None]] = None):
-        """커뮤니티와 포럼을 검색하여 블로트웨어 정보를 수집하고 AI로 평가 (콜백 추가)"""
+        """커뮤니티와 포럼을 검색하여 블로트웨어 정보를 수집하고 AI로 평가 (콜백 추가)
+        - Known bloatware 중심으로 정보를 수집하고 AI로 평가"""
         if not search_queries:
             logging.warning("Because the search queries are empty, the scraping process is terminated.")
             if progress_emitter:
@@ -286,19 +395,19 @@ class ThreatIntelligenceCollector:
         if progress_emitter:
             progress_emitter(f"Found {len(unique_candidates)} unique candidates. Starting evaluation...", None)
 
-
-        # 3. 검증 및 평가: 추출된 후보 프로그램을 심층 분석하고 점수 매기기
+        # 3. Two-Phase 평가: 1차 기본평가 → 2차 메타데이터 보강
         evaluated_programs = []
         for i, program_name in enumerate(unique_candidates):
             if not program_name or len(program_name) > 80: continue
 
             if progress_emitter:
-                # 상세 진행 상태를 클라이언트로 전송
                 masked_display_name = mask_name(program_name)
-                progress_emitter(f"({i+1}/{len(unique_candidates)}) Evaluating '{masked_display_name}'...", None)
+                progress_emitter(f"({i+1}/{len(unique_candidates)}) Phase 1: Evaluating '{masked_display_name}'...", None)
 
-            logging.info(f"Evaluating and scoring candidate program: '{program_name}'")
-            evaluation_prompt = f"""
+            logging.info(f"Phase 1: Basic evaluation for '{program_name}'")
+            
+            # Phase 1: 기본 평가
+            basic_evaluation_prompt = f"""
             Software Name: "{program_name}"
 
             Please evaluate this software and provide a risk score and reason in a JSON object.
@@ -310,45 +419,37 @@ class ThreatIntelligenceCollector:
               - 4-5: Low-Risk Bloatware (OEM utilities with minor impact, rarely used but safe). User's discretion.
               - 1-3: Legitimate Software (Well-known applications like office suites, browsers, drivers from major vendors). Do not recommend removal.
               - 0: Essential System Component (e.g., from Microsoft for Windows, critical drivers). MUST NOT be removed.
-            - `reason`: A brief, specific reason for the risk score. (e.g., "A security module that consumes high resources.", "Adware that displays pop-up ads.", "Required driver component.")
-            - `generic_name`: A generic name for the program. (e.g., "INISAFE Web v6.4" → "inisafe", "Delfino-x64" → "delfino", "AnySign For PC(32비트)" → "anysign", "Crosscert" → "crosscert", "nProtect Online Security Service(32비트)" → "nprotect")
+            - `reason`: A brief, specific reason for the risk score.
+            - `generic_name`: A generic name for the program.
           
             **REASON FIELD RULE**: In the 'reason' field, DO NOT repeat the program's name. Instead, use placeholders like '[This program]' or '[The software]'.
-            (Example: Instead of "nProtect is a security module...", write "[This program] is a security module...")
           
-            **CRITICAL**: If the program is a vital system component (e.g., from Microsoft, NVIDIA, Intel), assign `risk_score` = 0.
+            **CRITICAL**: If the program is a vital system component, assign `risk_score` = 0.
 
             Return only the JSON object.
-            {{
-                "program_name": "...",
-                "risk_score": ...,
-                "reason": "..."
-                "generic_name": "..."
-            }}
-
-            --- Example ---
-            {{
-                "program_name": "INISAFE Web v6.4",
-                "risk_score": 7,
-                "reason": "A security module that consumes high resources.",
-                "generic_name": "inisafe"
-            }}
             """
-            eval_response_text = generate_text(evaluation_prompt, temperature=0.3)
+            
+            basic_response_text = generate_text(basic_evaluation_prompt, temperature=0.3)
 
             try:
-                match = re.search(r'\{.*\}', eval_response_text, re.DOTALL)
+                match = re.search(r'\{.*\}', basic_response_text, re.DOTALL)
                 if match:
-                    evaluation_data = json.loads(match.group(0))
-                    # 위험도 4점 (구버전: 6점 이상) 이상인 경우에만 목록에 추가
-                    if evaluation_data.get("risk_score", 0) >= 4:
-                        # 마스킹된 이름 추가
-                        evaluation_data["masked_name"] = mask_name(evaluation_data["program_name"])
-                        evaluated_programs.append(evaluation_data)
+                    basic_data = json.loads(match.group(0))
+                    
+                    # 위험도 4점 이상인 경우에만 Phase 2 진행
+                    if basic_data.get("risk_score", 0) >= 4:
+                        if progress_emitter:
+                            progress_emitter(f"({i+1}/{len(unique_candidates)}) Phase 2: Enhancing '{masked_display_name}'...", None)
+                        
+                        # Phase 2: 메타데이터 보강
+                        enhanced_data = await self._enhance_threat_metadata(basic_data)
+                        enhanced_data["masked_name"] = mask_name(enhanced_data["program_name"])
+                        
+                        evaluated_programs.append(enhanced_data)
                         
                         if progress_emitter:
-                            progress_emitter(f" -> ✅ Added '{masked_display_name}' to list (Score: {evaluation_data['risk_score']})", "detail")
-                        logging.info(f"-> Evaluation completed: '{program_name}', Risk Score: {evaluation_data['risk_score']}")
+                            progress_emitter(f" -> ✅ Added '{masked_display_name}' to list (Score: {enhanced_data['risk_score']})", "detail")
+                        logging.info(f"-> Two-phase evaluation completed: '{program_name}', Risk Score: {enhanced_data['risk_score']}")
                 else:
                     if progress_emitter:
                         progress_emitter(f" -> ⚠️ Could not evaluate '{masked_display_name}'. Skipping.", "detail")
@@ -356,19 +457,19 @@ class ThreatIntelligenceCollector:
             except (json.JSONDecodeError, AttributeError):
                 if progress_emitter:
                     progress_emitter(f" -> ❌ Failed to parse evaluation for '{masked_display_name}'. Skipping.", "detail")    
-                logging.error(f"'{program_name}' Evaluation result parsing failed: {eval_response_text}")
+                logging.error(f"'{program_name}' Evaluation result parsing failed: {basic_response_text}")
 
-            await asyncio.sleep(1) # API 과부하 방지를 위한 딜레이
+            await asyncio.sleep(1)
 
         # 4. 평가 완료된 목록을 DB에 저장
         if evaluated_programs:
             if progress_emitter:
-                progress_emitter(f"Saving {len(evaluated_programs)} new threats to the database...", None)
-            logging.info(f"Saving {len(evaluated_programs)} significant bloatware information to the DB...")
+                progress_emitter(f"Saving {len(evaluated_programs)} enhanced threats to the database...", None)
+            logging.info(f"Saving {len(evaluated_programs)} enhanced bloatware information to the DB...")
             await database.async_update_threats(evaluated_programs)
 
     async def run_all_collectors(self, queries: Dict[str, List[str]], progress_emitter: Optional[Callable[[str, Any], None]] = None):
         """모든 정보 수집기를 실행"""
-        logging.info("===== Start collecting threat intelligence =====")
+        logging.info("===== Start Two-Phase Threat Intelligence Collection =====")
         await self.scrape_community_info(queries, progress_emitter)
-        logging.info("===== End collecting threat intelligence =====")
+        logging.info("===== End Two-Phase Threat Intelligence Collection =====")

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import configparser
 import os
+import re
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import UpdateOne
 
@@ -50,6 +51,37 @@ async def async_get_all_threats() -> list:
     except Exception as e:
         logging.error(f"Failed to fetch threat intelligence from MongoDB: {e}")
         return []
+    
+async def async_add_threat(threat_data: dict) -> str:
+    """
+    새로운 위협 정보를 DB에 추가
+    추가하기 전, generic_name을 기준으로 중복 여부를 확인
+    """
+    if not async_client:
+        return "ERROR_DB_CONNECTION"
+
+    generic_name = threat_data.get("generic_name")
+    if not generic_name:
+        return "ERROR_NO_GENERIC_NAME"
+
+    try:
+        # 대소문자 구분 없는 중복 확인
+        # ^와 $는 정확히 일치하는 단어를 찾기 위함
+        existing_threat = await threat_collection.find_one(
+            {"generic_name": {"$regex": f"^{re.escape(generic_name)}$", "$options": "i"}}
+        )
+        
+        if existing_threat:
+            logging.warning(f"Duplicate entry found for generic_name: {generic_name}. Insertion aborted.")
+            return "DUPLICATE"
+
+        await threat_collection.insert_one(threat_data)
+        logging.info(f"Successfully added new threat: {generic_name}")
+        return "SUCCESS"
+        
+    except Exception as e:
+        logging.error(f"Failed to add threat data to MongoDB: {e}")
+        return "ERROR_INSERTION_FAILED"
     
 async def async_get_threats_with_ignore_status(user_name: str) -> list:
     """
