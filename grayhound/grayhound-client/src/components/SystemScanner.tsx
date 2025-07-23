@@ -20,8 +20,10 @@ interface CleanupResult {
   masked_name: string;
   guide_masked_name?: string; // 가이드 메시지에 쓰일 마스킹된 이름
   path: string;
-  status: 'success' | 'failure';
+  status: 'success' | 'failure' | 'manual_required' | 'ui_opened';
   message: string;
+  ui_opened?: boolean;
+  force_failed?: boolean;
 }
 
 interface BackendMessage {
@@ -47,7 +49,91 @@ const guideTexts = {
   en: "Please go to 'Settings > Apps > Installed apps' to manually uninstall the programs listed below.",
   ko: "'설정 > 앱 > 설치된 앱'으로 이동하여 아래 목록의 프로그램을 직접 제거하세요.",
   ja: "「設定 > アプリ > インストールされているアプリ」に移動し、以下のリストにあるプログラムを手動でアンインストールしてください。",
-  zh: "请前往“设置 > 应用 > 安装的应用”，手动卸载下方列出的程序。",
+  zh: "请前往\"设置 > 应用 > 安装的应用\"，手动卸载下方列出的程序。",
+};
+
+// 수동 삭제 가이드 제목 다국어 지원
+const manualCleanupTitles = {
+  en: "Manual Cleanup Guide",
+  ko: "수동 제거 가이드",
+  ja: "手動削除ガイド",
+  zh: "手动清理指南",
+};
+
+// UI 열림 메시지 다국어 지원
+const uiOpenedMessages = {
+  en: "✅ Windows Settings opened. Please manually remove:",
+  ko: "✅ Windows 설정이 열렸습니다. 다음 프로그램을 직접 제거하세요:",
+  ja: "✅ Windows設定が開きました。以下のプログラムを手動で削除してください:",
+  zh: "✅ Windows设置已打开。请手动删除以下程序:",
+};
+
+// 강제 삭제 버튼 텍스트 다국어 지원
+const forceCleanButtonTexts = {
+  en: "Attempt Force Removal",
+  ko: "강제 삭제 시도",
+  ja: "強制削除を試行",
+  zh: "尝试强制删除",
+};
+
+// 위험 경고 텍스트 다국어 지원
+const warningTexts = {
+  en: "⚠️ This may be risky. Proceed with caution.",
+  ko: "⚠️ 위험할 수 있습니다. 신중하게 결정하세요.",
+  ja: "⚠️ 危険な可能性があります。慎重に判断してください。",
+  zh: "⚠️ 这可能存在风险。请谨慎操作。",
+};
+
+// 수동 삭제 설명 텍스트 다국어 지원
+const manualCleanupDescriptions = {
+  en: {
+    manualRequired: "The following programs require manual removal through Windows Settings:",
+    forceOption: "For programs that couldn't be removed automatically, you can attempt force removal:"
+  },
+  ko: {
+    manualRequired: "다음 프로그램은 Windows 설정을 통해 수동으로 제거해야 합니다:",
+    forceOption: "자동으로 제거할 수 없는 프로그램에 대해 강제 제거를 시도할 수 있습니다:"
+  },
+  ja: {
+    manualRequired: "以下のプログラムはWindows設定を通じて手動で削除する必要があります:",
+    forceOption: "自動削除できないプログラムに対して強制削除を試行できます:"
+  },
+  zh: {
+    manualRequired: "以下程序需要通过Windows设置手动删除:",
+    forceOption: "对于无法自动删除的程序，您可以尝试强制删除:"
+  }
+};
+
+// 버튼 텍스트 다국어 지원
+const buttonTexts = {
+  en: {
+    scanAgain: "Scan Again",
+    backToDashboard: "Back to Dashboard",
+    cleanSelected: "Clean Selected Items",
+    tryScanAgain: "Try Scan Again",
+    startPcScan: "Start PC Scan"
+  },
+  ko: {
+    scanAgain: "다시 스캔",
+    backToDashboard: "대시보드로 돌아가기",
+    cleanSelected: "선택된 항목 정리",
+    tryScanAgain: "다시 스캔 시도",
+    startPcScan: "PC 스캔 시작"
+  },
+  ja: {
+    scanAgain: "再スキャン",
+    backToDashboard: "ダッシュボードに戻る",
+    cleanSelected: "選択されたアイテムをクリーンアップ",
+    tryScanAgain: "スキャンを再試行",
+    startPcScan: "PCスキャンを開始"
+  },
+  zh: {
+    scanAgain: "重新扫描",
+    backToDashboard: "返回仪表板",
+    cleanSelected: "清理选定项目",
+    tryScanAgain: "重试扫描",
+    startPcScan: "开始PC扫描"
+  }
 };
 
 // 정규식 특수문자를 이스케이프하는 헬퍼 함수
@@ -62,7 +148,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
   const [finalReport, setFinalReport] = useState("");
   const [cleanupResults, setCleanupResults] = useState<CleanupResult[]>([]);
   const [error, setError] = useState("");
-  const [riskThreshold, setRiskThreshold] = useState(6); // 위험도 임계값 상태
+  const [riskThreshold, setRiskThreshold] = useState(4); // 위험도 임계값 상태
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const ws = useRef<WebSocket | null>(null);
@@ -227,51 +313,136 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
             })}
         </div>
         <div className="row">
-            <button onClick={handleClean} disabled={scanResults.filter(i => i.clean).length === 0}>Clean Selected Items</button>
-            <button type="button" onClick={handleScan}>Scan Again</button>
-            <button type="button" onClick={() => handleBackToDashboard()}>Back to Dashboard</button>
+            <button onClick={handleClean} disabled={scanResults.filter(i => i.clean).length === 0}>
+              {buttonTexts[language as keyof typeof buttonTexts]?.cleanSelected || buttonTexts.en.cleanSelected}
+            </button>
+            <button type="button" onClick={handleScan}>
+              {buttonTexts[language as keyof typeof buttonTexts]?.scanAgain || buttonTexts.en.scanAgain}
+            </button>
+            <button type="button" onClick={() => handleBackToDashboard()}>
+              {buttonTexts[language as keyof typeof buttonTexts]?.backToDashboard || buttonTexts.en.backToDashboard}
+            </button>
         </div>
     </div>
   );
 
-  const renderReport = () => {
-    const trulyFailedItems = cleanupResults.filter(item => item.status === 'failure');
+  // 사용자 동의 확인 함수
+  const handleForceCleanConfirmation = (failedItems: CleanupResult[]) => {
+    const forceCleanableItems = failedItems.filter(item =>
+      item.status === 'manual_required' || item.force_failed
+    );
+    if (forceCleanableItems.length === 0) {
+      return;
+    }
+    
+    const confirmMessages = {
+      en: `⚠️ Automatic removal failed for:\n${forceCleanableItems.map(item => `• ${item.guide_masked_name || item.masked_name}`).join('\n')}\n\nAttempt forceful removal? (This may be risky)`,
+      ko: `⚠️ 자동 제거 실패:\n${forceCleanableItems.map(item => `• ${item.guide_masked_name || item.masked_name}`).join('\n')}\n\n강제 제거를 시도할까요? (위험할 수 있음)`,
+      ja: `⚠️ 自動削除に失敗しました:\n${forceCleanableItems.map(item => `• ${item.guide_masked_name || item.masked_name}`).join('\n')}\n\n強制的な削除を試行しますか？ (危険な可能性があります)`,
+      zh: `⚠️ 自动清理失败:\n${forceCleanableItems.map(item => `• ${item.guide_masked_name || item.masked_name}`).join('\n')}\n\n尝试强制删除？ (可能存在风险)`,
+    };
 
+    const confirmMessage = confirmMessages[language as keyof typeof confirmMessages] || confirmMessages.en;
+    const userConfirmed = window.confirm(confirmMessage);
+    
+    if (userConfirmed && ws.current?.readyState === WebSocket.OPEN) {
+      // 강제 삭제 요청 전달
+      ws.current.send(JSON.stringify({
+        command: "force_clean",
+        args: [JSON.stringify(forceCleanableItems), language]
+      }));
+    }
+  }
+
+  const renderReport = () => {
+    const manualItems = cleanupResults.filter(item => 
+      item.status === 'manual_required' || item.status === 'ui_opened'
+    );
+    const forceFailedItems = cleanupResults.filter(item => 
+      item.status === 'manual_required' && item.force_failed
+    );
+  
     return (
       <div className="report-box">
-          <h3>Final Report</h3>
-          <pre>{finalReport}</pre>
-
-          {/*--- 수동 제거 가이드 ---*/}
-          {trulyFailedItems.length > 0 && (
-            <div className="manual-cleanup-guide">
-              <h4>Manual Cleanup Guide</h4>
-              {/* 다국어 텍스트 표시 */}
-              <p>{guideTexts[language as keyof typeof guideTexts] || guideTexts['en']}</p>
-              
-              <ul>
-                {trulyFailedItems.map(item => (
-                  <li key={item.name}>
-                    {/* 새로운 마스킹 이름(guide_masked_name) 사용, 없으면 기존 masked_name 사용 */}
-                    <span>{item.guide_masked_name || item.masked_name}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <button type="button" onClick={handleScan}>Scan Again</button>
-          <button type="button" onClick={() => handleBackToDashboard()}>Back to Dashboard</button>
+        <h3>Final Report</h3>
+        <pre>{finalReport}</pre>
+  
+        {/*--- 수동 제거 가이드 (개선됨) ---*/}
+        {manualItems.length > 0 && (
+          <div className="manual-cleanup-guide">
+            <h4>{manualCleanupTitles[language as keyof typeof manualCleanupTitles] || manualCleanupTitles['en']}</h4>
+            
+            {/* UI가 열린 항목들 */}
+            {manualItems.filter(item => item.ui_opened).length > 0 && (
+              <div className="ui-opened-section">
+                <p className="success-msg">
+                  {uiOpenedMessages[language as keyof typeof uiOpenedMessages] || uiOpenedMessages.en}
+                </p>
+                <ul>
+                  {manualItems.filter(item => item.ui_opened).map(item => (
+                    <li key={item.name} className="ui-opened-item">
+                      <span>{item.guide_masked_name || item.masked_name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            
+            {/* 일반적인 수동 제거가 필요한 항목들 */}
+            {manualItems.filter(item => !item.ui_opened).length > 0 && (
+              <div className="manual-removal-section">
+                <p>{manualCleanupDescriptions[language as keyof typeof manualCleanupDescriptions]?.manualRequired || manualCleanupDescriptions.en.manualRequired}</p>
+                <p className="guide-text">{guideTexts[language as keyof typeof guideTexts] || guideTexts['en']}</p>
+                <ul>
+                  {manualItems.filter(item => !item.ui_opened).map(item => (
+                    <li key={item.name}>
+                      <span>{item.guide_masked_name || item.masked_name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            
+            {/* 강제 삭제 옵션 (실패한 항목들에 대해) */}
+            {forceFailedItems.length > 0 && (
+              <div className="force-clean-option">
+                <p className="force-option-desc">
+                  {manualCleanupDescriptions[language as keyof typeof manualCleanupDescriptions]?.forceOption || manualCleanupDescriptions.en.forceOption}
+                </p>
+                <button 
+                  className="force-clean-btn"
+                  onClick={() => handleForceCleanConfirmation(forceFailedItems)}
+                >
+                  {forceCleanButtonTexts[language as keyof typeof forceCleanButtonTexts] || forceCleanButtonTexts['en']}
+                </button>
+                <small className="warning-text">
+                  {warningTexts[language as keyof typeof warningTexts] || warningTexts.en}
+                </small>
+              </div>
+            )}
+          </div>
+        )}
+  
+        <button type="button" onClick={handleScan}>
+          {buttonTexts[language as keyof typeof buttonTexts]?.scanAgain || buttonTexts.en.scanAgain}
+        </button>
+        <button type="button" onClick={() => handleBackToDashboard()}>
+          {buttonTexts[language as keyof typeof buttonTexts]?.backToDashboard || buttonTexts.en.backToDashboard}
+        </button>
       </div>
     );
-  }
+  };
 
   const renderError = () => (
       <div className="error-container">
           <h3>Error</h3>
           <pre className="error-log">{error}</pre>
-          <button type="button" onClick={handleScan}>Try Scan Again</button>
-          <button type="button" onClick={() => handleBackToDashboard()}>Back to Dashboard</button>
+          <button type="button" onClick={handleScan}>
+            {buttonTexts[language as keyof typeof buttonTexts]?.tryScanAgain || buttonTexts.en.tryScanAgain}
+          </button>
+          <button type="button" onClick={() => handleBackToDashboard()}>
+            {buttonTexts[language as keyof typeof buttonTexts]?.backToDashboard || buttonTexts.en.backToDashboard}
+          </button>
       </div>
   );
 
@@ -296,8 +467,12 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
           className="risk-slider"
         />
       </div>
-      <button onClick={handleScan} className="start-button">Start PC Scan</button>
-      <button type="button" onClick={() => handleBackToDashboard()}>Back to Dashboard</button>
+      <button onClick={handleScan} className="start-button">
+        {buttonTexts[language as keyof typeof buttonTexts]?.startPcScan || buttonTexts.en.startPcScan}
+      </button>
+      <button type="button" onClick={() => handleBackToDashboard()}>
+        {buttonTexts[language as keyof typeof buttonTexts]?.backToDashboard || buttonTexts.en.backToDashboard}
+      </button>
     </>
   );
 

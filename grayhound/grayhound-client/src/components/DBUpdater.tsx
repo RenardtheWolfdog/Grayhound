@@ -84,10 +84,24 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
 
       switch (output.type) {
         case 'progress':
-          setProgressLog(prev => [...prev, `[INFO] ${output.data.status}`]);
+          // progress 메시지 처리 - data가 객체인 경우와 문자열인 경우 모두 처리
+          let statusMessage = '';
+          if (typeof output.data === 'string') {
+            statusMessage = output.data;
+          } else if (output.data?.status) {
+            statusMessage = output.data.status;
+          } else if (output.data) {
+            statusMessage = JSON.stringify(output.data);
+          }
+          
+          if (statusMessage) {
+            setProgressLog(prev => [...prev, `[INFO] ${statusMessage}`]);
+          }
           break;
         case 'error':
-          setProgressLog(prev => [...prev, `[ERROR] ❌ ${output.data}`]);
+          // error 메시지 처리
+          const errorMessage = typeof output.data === 'string' ? output.data : JSON.stringify(output.data);
+          setProgressLog(prev => [...prev, `[ERROR] ❌ ${errorMessage}`]);
           setIsLoading(false);
           setIsProcessFinished(true);
           break;

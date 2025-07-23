@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import database
 from SecurityAgentManager import SecurityAgentManager
 from secure_agent.ThreatIntelligenceCollector import ThreatIntelligenceCollector
-from utils import mask_name
+from utils import mask_name, mask_name_for_guide
 
 # --- 로깅 설정 ---
 logging.basicConfig(
@@ -169,35 +169,232 @@ async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: i
         logging.error(f"An error occurred during PC scan: {e}", exc_info=True)
         await emit(websocket, "error", f"An unexpected error occurred during scan: {e}")
 
-async def clean_pc_workflow(websocket, items_to_clean_json: str, language: str = "en"):
-    """PC 정리(삭제) 워크플로우"""
+
+async def phase_a_clean_workflow(websocket, items_to_clean_json: str, language: str = "en"):
+    """Phase A: 1단계 기본 정리만 수행"""
     try:
         items_to_clean = json.loads(items_to_clean_json)
         if not items_to_clean:
-            await emit(websocket, "error", "No items selected for cleaning.")
+            await emit_error(websocket, "No items selected for Phase A cleaning.")
             return
 
-        await emit_progress(websocket, f"Starting to clean {len(items_to_clean)} items...", items_to_clean)
+        await emit_progress(websocket, f"🧹 Phase A: Starting basic cleanup of {len(items_to_clean)} items...")
         manager = SecurityAgentManager(session_id="grayhound_tauri_session", user_name="user")
         
-        # 클라이언트에서 언어 설정을 받아와서 cleanup 실행
-        cleanup_result = await manager.execute_cleanup(items_to_clean, language=language)
+        # Phase A 전용 cleanup 실행
+        cleanup_result = await manager.execute_phase_a_cleanup(items_to_clean, language=language)
 
         if "error" in cleanup_result:
-            await emit(websocket, "error", cleanup_result["error"])
+            await emit_error(websocket, cleanup_result["error"])
             return
 
-        # 정리 결과와 LLM 리포트를 클라이언트로 전송
-        await emit(websocket, "cleanup_complete", {
+        # Phase A 결과 전송
+        await emit(websocket, "phase_a_complete", {
             "results": cleanup_result.get("results", []),
-            "llm_feedback": cleanup_result.get("llm_feedback", "Report generation failed.")
+            "llm_feedback": cleanup_result.get("llm_feedback", "Phase A completed.")
         })
 
-    except json.JSONDecodeError as e:
-        await emit_error(websocket, "Invalid item list format received for cleaning.")
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid item list format for Phase A cleaning.")
     except Exception as e:
-        logging.error(f"An error occurred during cleaning: {e}", exc_info=True)
-        await emit_error(websocket, f"An unexpected error occurred during cleaning: {e}")
+        logging.error(f"Error during Phase A cleaning: {e}", exc_info=True)
+        await emit_error(websocket, f"Phase A error: {e}")
+
+async def phase_b_clean_workflow(websocket, items_to_clean_json: str, language: str = "en"):
+    """Phase B: 2단계 UI 기반 정리"""
+    try:
+        items_to_clean = json.loads(items_to_clean_json)
+        if not items_to_clean:
+            await emit_error(websocket, "No items selected for Phase B cleaning.")
+            return
+
+        await emit_progress(websocket, f"📱 Phase B: Opening Windows Settings for {len(items_to_clean)} items...")
+        
+        # Optimizer 클라이언트에 직접 연결하여 Phase B 실행
+        from agent_client import OptimizerAgentClient
+        optimizer_client = OptimizerAgentClient()
+        
+        # Phase B 전용 cleanup 실행
+        phase_b_results = await optimizer_client.execute_phase_b_cleanup(items_to_clean)
+
+        if phase_b_results is None:
+            await emit_error(websocket, "Failed to execute Phase B cleanup.")
+            return
+
+        # 결과 마스킹 처리
+        for result in phase_b_results:
+            result["masked_name"] = mask_name(result.get("name", ""))
+            result["guide_masked_name"] = mask_name_for_guide(result.get("name", ""))
+
+        await emit(websocket, "phase_b_complete", {
+            "results": phase_b_results
+        })
+
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid item list format for Phase B cleaning.")
+    except Exception as e:
+        logging.error(f"Error during Phase B cleaning: {e}", exc_info=True)
+        await emit_error(websocket, f"Phase B error: {e}")
+
+async def phase_c_clean_workflow(websocket, items_to_clean_json: str, language: str = "en"):
+    """Phase C: 3단계 강제 정리"""
+    try:
+        items_to_clean = json.loads(items_to_clean_json)
+        if not items_to_clean:
+            await emit_error(websocket, "No items selected for Phase C cleaning.")
+            return
+
+        await emit_progress(websocket, f"💪 Phase C: Force removing {len(items_to_clean)} items...")
+        
+        # Optimizer 클라이언트에 직접 연결하여 Phase C 실행
+        from agent_client import OptimizerAgentClient
+        optimizer_client = OptimizerAgentClient()
+        
+        # Phase C 전용 cleanup 실행
+        phase_c_results = await optimizer_client.execute_phase_c_cleanup(items_to_clean)
+
+        if phase_c_results is None:
+            await emit_error(websocket, "Failed to execute Phase C cleanup.")
+            return
+
+        # 결과 마스킹 처리
+        for result in phase_c_results:
+            result["masked_name"] = mask_name(result.get("name", ""))
+            result["guide_masked_name"] = mask_name_for_guide(result.get("name", ""))
+
+        await emit(websocket, "phase_c_complete", {
+            "results": phase_c_results
+        })
+
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid item list format for Phase C cleaning.")
+    except Exception as e:
+        logging.error(f"Error during Phase C cleaning: {e}", exc_info=True)
+        await emit_error(websocket, f"Phase C error: {e}")
+
+async def generate_comprehensive_report_workflow(websocket, all_results_json: str, language: str = "en"):
+    """모든 Phase 결과를 종합한 포괄적 리포트 생성"""
+    try:
+        all_results = json.loads(all_results_json)
+        manager = SecurityAgentManager(session_id="grayhound_tauri_session", user_name="user")
+        
+        await emit_progress(websocket, "📋 Generating comprehensive cleanup report...")
+        
+        # 포괄적 리포트 생성 (Phase별 결과 포함)
+        comprehensive_feedback = await manager._generate_comprehensive_feedback(all_results, language)
+        
+        await emit(websocket, "final_report_generated", {
+            "llm_feedback": comprehensive_feedback,
+            "comprehensive": True
+        })
+        
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid results format for comprehensive report.")
+    except Exception as e:
+        logging.error(f"Error generating comprehensive report: {e}", exc_info=True)
+        await emit_error(websocket, f"Failed to generate comprehensive report: {e}")
+
+async def generate_final_report_workflow(websocket, cleanup_results_json: str, language: str = "en"):
+    """수동 작업 완료 후 최종 리포트 생성 워크플로우"""
+    try:
+        cleanup_results = json.loads(cleanup_results_json)
+        manager = SecurityAgentManager(session_id="grayhound_tauri_session", user_name="user")
+        
+        # LLM 피드백 생성 (수동 작업 결과 포함)
+        llm_feedback = await manager._generate_llm_feedback(cleanup_results, language)
+        
+        await emit(websocket, "final_report_generated", {
+            "llm_feedback": llm_feedback,
+            "manual_completed": True
+        })
+        
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid cleanup results format.")
+    except Exception as e:
+        logging.error(f"Error generating final report: {e}", exc_info=True)
+        await emit_error(websocket, f"Failed to generate final report: {e}")
+
+async def force_clean_workflow(websocket, items_to_force_clean_json: str, language: str = "en"):
+    """강제 정리 워크플로우 - 사용자가 동의한 항목들에 대해서만"""
+    try:
+        items_to_force_clean = json.loads(items_to_force_clean_json)
+        if not items_to_force_clean:
+            await emit_error(websocket, "No items selected for force cleaning.")
+            return
+
+        await emit_progress(websocket, f"⚠️ Starting FORCEFUL removal of {len(items_to_force_clean)} items...", None)
+        manager = SecurityAgentManager(session_id="grayhound_tauri_session", user_name="user")
+        
+        # 강제 정리를 위한 특별한 실행기 생성 (더 적극적인 설정)
+        from agent_client import OptimizerAgentClient
+        optimizer_client = OptimizerAgentClient()
+        
+        # 강제 정리 목록 준비
+        force_cleanup_list = []
+        for item in items_to_force_clean:
+            force_cleanup_list.append({
+                "name": item["name"],
+                "command_type": "force_uninstall_program",  # 새로운 명령 타입
+                "program_name": item["name"]
+            })
+        
+        # 강제 정리 실행
+        force_results = await optimizer_client.execute_cleanup_plan(force_cleanup_list)
+        
+        if force_results is None:
+            await emit_error(websocket, "Failed to execute force cleanup.")
+            return
+
+        # 결과 정리
+        comprehensive_results = []
+        for res in force_results:
+            original_name = res.get("name")
+            res["masked_name"] = mask_name(original_name)
+            res["guide_masked_name"] = mask_name_for_guide(original_name)
+            comprehensive_results.append(res)
+        
+        # LLM 피드백 생성
+        llm_feedback = await manager._generate_llm_feedback(comprehensive_results, language)
+
+        await emit(websocket, "force_cleanup_complete", {
+            "results": comprehensive_results,
+            "llm_feedback": llm_feedback
+        })
+
+    except json.JSONDecodeError:
+        await emit_error(websocket, "Invalid item list format for force cleaning.")
+    except Exception as e:
+        logging.error(f"An error occurred during force cleaning: {e}", exc_info=True)
+        await emit_error(websocket, f"An unexpected error occurred during force cleaning: {e}")
+
+async def open_uninstall_ui_workflow(websocket, program_name: str):
+    """Windows 제거 UI 열기 워크플로우"""
+    try:
+        if not program_name:
+            await emit_error(websocket, "No program name provided.")
+            return
+            
+        # SystemExecutor 인스턴스 생성하여 UI 열기 시도
+        from SecurityAgentManager import SecurityAgentManager
+        manager = SecurityAgentManager(session_id="grayhound_ui_session", user_name="user")
+        
+        # UI 열기 시도
+        ui_result = await manager.open_uninstall_ui(program_name)
+        
+        if ui_result.get("status") == "ui_opened":
+            await emit_progress(websocket, f"✅ Windows uninstall UI opened for '{mask_name(program_name)}'")
+            await emit(websocket, "ui_opened_success", {
+                "program_name": program_name,
+                "masked_name": mask_name(program_name),
+                "message": ui_result.get("message", "")
+            })
+        else:
+            await emit_error(websocket, f"Failed to open UI: {ui_result.get('message', 'Unknown error')}")
+            
+    except Exception as e:
+        logging.error(f"Error opening uninstall UI for '{program_name}': {e}", exc_info=True)
+        await emit_error(websocket, f"Failed to open uninstall UI: {e}")
+        
 
 async def save_ignore_list_workflow(websocket, ignore_list_json: str):
     """클라이언트에서 받은 무시 목록을 DB에 저장"""
@@ -286,7 +483,31 @@ async def handler(websocket):
                 elif command == "clean":
                     # 클라이언트에서 받은 language 인자 사용
                     language_arg = args[1] if len(args) > 1 else "en"
-                    await clean_pc_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                    await phase_a_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
+
+                # === Phase 시스템 명령들 ===
+                elif command == "phase_a_clean":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await phase_a_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                elif command == "phase_b_clean":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await phase_b_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                elif command == "phase_c_clean":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await phase_c_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                elif command == "generate_comprehensive_report":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await generate_comprehensive_report_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                
+                elif command == "force_clean":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await force_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                elif command == "open_uninstall_ui":
+                    await open_uninstall_ui_workflow(websocket, args[0] if args else "")
+                elif command == "generate_final_report":
+                    language_arg = args[1] if len(args) > 1 else "en"
+                    await generate_final_report_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                
                 elif command == "save_ignore_list":
                     await save_ignore_list_workflow(websocket, args[0] if args else "[]")
                 elif command == "add_item_to_db":

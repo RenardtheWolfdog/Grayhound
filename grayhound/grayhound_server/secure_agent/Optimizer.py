@@ -1,4 +1,4 @@
-# Optimizer.py (v2.2 - Robust Executor)
+# Optimizer.py (v2.3 - Enhanced with 3-Step Uninstall Logic)
 # Grayhound's Local System Scout & Executor Agent
 
 import asyncio
@@ -27,7 +27,7 @@ logging.basicConfig(
 
 # --- 기본 설정 ---
 HOST = 'localhost'
-PORT = 9001
+PORT = 9002
 
 # --- 시스템 프로파일러 클래스 ---
 class SystemProfiler:
@@ -95,13 +95,13 @@ class SystemProfiler:
         logging.info("시스템 프로필 생성 완료! 🌝")
         return self.profile
 
-# --- 시스템 실행기 클래스 (Executor의 역할) ---
+# --- 시스템 실행기 클래스 (Executor with 3-phase Logic) ---
 class SystemExecutor:
-    """사용자의 최종 명령에 따라 시스템 정리 작업을 수행 (강제 제거 기능 포함)"""
+    """사용자의 최종 명령에 따라 시스템 정리 작업을 수행 (3단계 제거 로직)"""
     def __init__(self, dry_run=False):
         self.dry_run = dry_run
         self.protected_paths = [
-            os.environ.get("SystemRoot", "C:\\Windows").lower(),
+            os.environ.get("SystemRoot", "C:\\Windows\\System32").lower(),
             os.environ.get("UserProfile", "").lower(),
         ]
         self.protected_publishers = [
@@ -110,7 +110,7 @@ class SystemExecutor:
         ]
         logging.info(f"시스템 실행기 초기화. **Dry Run Mode: {self.dry_run}**")
         if self.dry_run:
-            logging.warning("Dry Run 모드에서는 실제 파일 삭제나 프로세스 종료가 이루어지지 않아!")
+            logging.warning("Dry Run 모드에서는 실제 파일 삭제나 프로세스 종료가 이루어지지 않아! 🐾")
 
     def terminate_process(self, pid: int) -> Dict[str, Any]:
         """PID를 사용하여 프로세스를 종료"""
@@ -373,8 +373,209 @@ class SystemExecutor:
                 continue
         return None, None, None
 
+    def _find_product_code(self, program_name: str) -> Optional[str]:
+        """레지스트리에서 MSI ProductCode 찾기 (MSI 기반 프로그럄용)"""
+        uninstall_paths = [
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+        ]
+        for path in uninstall_paths:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                    for i in range(winreg.QueryInfoKey(key)[0]):
+                        sub_key_name = winreg.EnumKey(key, i)
+                        try:
+                            with winreg.OpenKey(key, sub_key_name) as sub_key:
+                                display_name = winreg.QueryValueEx(sub_key, "DisplayName")[0]
+                                if display_name.lower() == program_name.lower():
+                                    # MSI GUID 형식인지 확인
+                                    if sub_key_name.startswith('{') and sub_key_name.endswith('}'):
+                                        return sub_key_name
+                        except OSError:
+                            continue
+            except FileNotFoundError:
+                continue
+        return None
+    
+    def _open_windows_uninstall_ui(self, program_name: str) -> Dict[str, Any]:
+        """2단계: Windows 설정 앱의 언인스톨 UI를 직접 열기"""
+        try:
+            if self.dry_run:
+                logging.info(f"[Dry Run] Opening Windows uninstall UI for '{mask_name(program_name)}'")
+                return {"status": "ui_opened", "message": f"Windows uninstall UI would open for '{mask_name(program_name)}'"}
+            
+            logging.info(f"Step 2: Opening Windows uninstall UI for '{mask_name(program_name)}'")
+            
+            try:
+                # 방법 1: Windows 설정 앱의 앱 및 기능 페이지 열기
+                subprocess.run([
+                    "start", "ms-settings:appsfeatures"
+                ], shell=True, check=True)
+                
+                # 설정 앱이 완전히 로드될 때까지 대기
+                time.sleep(3)
+                
+                # PowerShell을 사용해 프로그램 검색
+                search_script = f'''
+                Add-Type -AssemblyName System.Windows.Forms
+                Add-Type -AssemblyName System.Drawing
+                
+                # 설정 앱이 로드될 때까지 추가 대기
+                Start-Sleep -Milliseconds 1500
+                
+                # Tab 키를 여러 번 눌러서 앱 검색 필드로 이동
+                # (Windows 11에서는 보통 3번의 Tab으로 앱 검색 필드에 도달)
+                [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}{{TAB}}{{TAB}}")
+                Start-Sleep -Milliseconds 500
+                
+                # 검색 필드가 활성화되면 기존 텍스트 지우고 프로그램명 입력
+                [System.Windows.Forms.SendKeys]::SendWait("^a")
+                Start-Sleep -Milliseconds 300
+                [System.Windows.Forms.SendKeys]::SendWait("{program_name}")
+                Start-Sleep -Milliseconds 500
+                
+                # Enter 키로 검색 실행
+                [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
+                '''
+                
+                subprocess.run([
+                    "powershell", "-WindowStyle", "Hidden", "-Command", search_script
+                ], check=False)  # 검색이 실패해도 UI는 열렸으므로 check=False
+                
+                return {
+                    "status": "ui_opened", 
+                    "message": f"Windows settings opened with search for '{mask_name(program_name)}'. Please proceed with manual uninstall."
+                }
+                
+            except subprocess.CalledProcessError:
+                # 방법 2: 제어판의 프로그램 추가/제거 열기 (대체 방법)
+                try:
+                    subprocess.run(["appwiz.cpl"], shell=True, check=True)
+                    
+                    # 제어판에서도 검색 시도
+                    time.sleep(2)
+                    control_panel_search = f'''
+                    Add-Type -AssemblyName System.Windows.Forms
+                    Start-Sleep -Milliseconds 1000
+                    [System.Windows.Forms.SendKeys]::SendWait("{program_name}")
+                    '''
+                    
+                    subprocess.run([
+                        "powershell", "-WindowStyle", "Hidden", "-Command", control_panel_search
+                    ], check=False)
+                    
+                    return {
+                        "status": "ui_opened",
+                        "message": f"Control Panel opened and searched for '{mask_name(program_name)}'. Please double-click the program to uninstall."
+                    }
+                except subprocess.CalledProcessError:
+                    # 방법 3: PowerShell을 통한 직접 앱 목록 표시
+                    try:
+                        ps_script = f'''
+                        # Windows 앱 목록을 GUI로 표시하고 특정 앱 하이라이트
+                        $apps = Get-WmiObject -Class Win32_Product | Where-Object {{$_.Name -like "*{program_name}*"}}
+                        if ($apps) {{
+                            $apps | Select-Object Name, Version, Vendor | Out-GridView -Title "Found Programs - Select to Uninstall" -PassThru | ForEach-Object {{
+                                $_.Uninstall()
+                            }}
+                        }} else {{
+                            [System.Windows.Forms.MessageBox]::Show("Program '{program_name}' not found in WMI. Please uninstall manually from Settings > Apps.", "Grayhound", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+                        }}
+                        '''
+                        
+                        subprocess.run([
+                            "powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_script
+                        ], check=False)
+                        
+                        return {
+                            "status": "ui_opened",
+                            "message": f"PowerShell uninstall interface opened for '{mask_name(program_name)}'. Follow the prompts to uninstall."
+                        }
+                    except Exception:
+                        return {
+                            "status": "failure", 
+                            "message": f"All UI methods failed. Please manually go to Settings > Apps and uninstall '{mask_name(program_name)}'."
+                        }
+                
+        except Exception as e:
+            logging.error(f"Failed to open uninstall UI for '{mask_name(program_name)}': {e}")
+            return {
+                "status": "failure",
+                "message": f"Could not open uninstall UI: {str(e)}"
+            }
+
+    def _find_product_code(self, program_name: str) -> Optional[str]:
+        """레지스트리에서 MSI ProductCode 찾기 (MSI 기반 프로그램용)"""
+        uninstall_paths = [
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+        ]
+        
+        for path in uninstall_paths:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+                    for i in range(winreg.QueryInfoKey(key)[0]):
+                        sub_key_name = winreg.EnumKey(key, i)
+                        try:
+                            with winreg.OpenKey(key, sub_key_name) as sub_key:
+                                display_name = winreg.QueryValueEx(sub_key, "DisplayName")[0]
+                                if display_name.lower() == program_name.lower():
+                                    # MSI GUID 형식인지 확인
+                                    if sub_key_name.startswith('{') and sub_key_name.endswith('}'):
+                                        return sub_key_name
+                        except OSError:
+                            continue
+            except FileNotFoundError:
+                continue
+        return None
+
+    def _attempt_msi_uninstall_with_ui(self, program_name: str, product_code: str = None) -> Dict[str, Any]:
+        """2단계: MSI 기반 프로그램에 대한 UI 포함 msiexec 명령 시도"""
+        try:
+            if not product_code:
+                product_code = self._find_product_code(program_name)
+            
+            if not product_code:
+                return {"status": "failure", "message": "ProductCode not found for MSI uninstall"}
+            
+            if self.dry_run:
+                logging.info(f"[Dry Run] MSI uninstall UI for '{mask_name(program_name)}' with code {product_code}")
+                return {"status": "ui_opened", "message": "MSI uninstall UI would be opened"}
+            
+            logging.info(f"Step 2: Attempting MSI uninstall UI for '{mask_name(program_name)}'...")
+            
+            # msiexec 명령 실행 (UI 포함) - /qb는 기본 UI 표시
+            msi_command = f'msiexec /x {product_code} /qb'
+            
+            result = subprocess.run(
+                msi_command,
+                shell=True,
+                capture_output=False,  # UI가 표시되어야 하므로 capture 하지 않음
+                timeout=180  # 3분 타임아웃
+            )
+            
+            if result.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": f"MSI uninstall completed for '{mask_name(program_name)}'"
+                }
+            else:
+                return {
+                    "status": "ui_opened",
+                    "message": f"MSI uninstall UI opened for '{mask_name(program_name)}' (user may have cancelled)"
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "ui_opened",
+                "message": f"MSI uninstall UI opened for '{mask_name(program_name)}' but timed out (likely user interaction)"
+            }
+        except Exception as e:
+            logging.error(f"MSI uninstall failed for '{mask_name(program_name)}': {e}")
+            return {"status": "failure", "message": str(e)}
+
     def forceful_uninstall_program(self, program_name: str, install_path: str, publisher: str) -> Dict[str, Any]:
-        """표준 제거 실패 시 파일 및 레지스트리를 직접 제거하는 강제 제거 로직"""
+        """3단계: 표준 제거 실패 시 파일 및 레지스트리를 직접 제거하는 강제 제거 로직"""
         logging.warning(f"Start Forceful Uninstall: '{mask_name(program_name)}'")
 
         # 1. 최종 안전장치
@@ -415,56 +616,102 @@ class SystemExecutor:
         return {"status": "success", "message": final_message}
 
     def uninstall_program(self, program_name: str) -> Dict[str, Any]:
-        """프로그램 제거를 시도하고, 실패 시 강제 제거를 시도하는 2단계 로직"""
+        """Enhanced 3단계 프로그램 제거 로직"""
+        
+        # 기본 정보 수집
         uninstall_command, publisher, install_path = self.get_uninstall_info(program_name)
-
+        
         if not uninstall_command:
-            logging.warning(f"Uninstall info not found for '{mask_name(program_name)}'. Attempting forceful removal...")
-            # 강제 제거에 필요한 최소 정보 (게시자, 설치 경로)라도 찾아야 함
-            # 이 정보마저 없다면, 프로그램 이름만으로 강제 제거 시도
+            logging.warning(f"Uninstall info not found for '{mask_name(program_name)}'. Trying UI methods...")
+            
+            # 정보가 없어도 UI 열기 시도
+            ui_result = self._open_windows_uninstall_ui(program_name)
+            if ui_result["status"] == "ui_opened":
+                return {
+                    "status": "manual_required",
+                    "message": ui_result["message"],
+                    "ui_opened": True
+                }
+            
+            # UI 열기도 실패하면 기존 강제 제거 로직으로
             if not publisher or not install_path:
-                # SystemProfiler 인스턴스 생성하여 get_installed_programs 호출
+                # SystemProfiler로 추가 정보 찾기
                 profiler = SystemProfiler()
                 all_programs = profiler.get_installed_programs()
                 found = next((p for p in all_programs if p['name'].lower() == program_name.lower()), None)
                 if found:
                     publisher = found.get('publisher')
                     install_path = found.get('install_location')
-        
-            # 정보가 하나라도 있으면 강제 제거 진행
+            
             if publisher or install_path:
                 return self.forceful_uninstall_program(program_name, install_path, publisher)
             else:
-                 return {"status": "failure", "message": f"Cannot find any info to forcefully uninstall '{mask_name(program_name)}'"}
+                return {"status": "failure", "message": f"Cannot find any info to remove '{mask_name(program_name)}'"}
                 
+        # 보호된 게시자 확인
         if publisher and publisher.lower() in self.protected_publishers:
             return {"status": "failure", "message": f"Protected Publisher: '{mask_name(program_name)}'"}
         
-        # 1단계: 표준 제거 시도
+        logging.info(f"Starting Enhanced 3-Step Uninstall for '{mask_name(program_name)}'")
+        
+        # === 1단계: 표준 제거 시도 ===
         try:
-            logging.info(f"Standard Uninstall Attempt: '{mask_name(program_name)}'")
-            subprocess.run(uninstall_command, check=True, shell=True, capture_output=True, text=True, startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW), timeout=60)
+            logging.info(f"Step 1: Standard Uninstall Attempt for '{mask_name(program_name)}'")
+            subprocess.run(uninstall_command, check=True, shell=True, capture_output=True, text=True, 
+                         startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW), timeout=60)
             
             # 제거 후에도 프로그램 정보가 남아있는지 확인하여 실제 성공 여부 판단
-            # 잠시 대기 후 레지스트리 재확인
             time.sleep(2) 
             check_command, _, _ = self.get_uninstall_info(program_name)
-            if check_command:
-                 logging.warning(f"Standard uninstall reported success, but '{mask_name(program_name)}' is still found. Proceeding to forceful removal.")
-                 return self.forceful_uninstall_program(program_name, install_path, publisher)
-            
-            return {"status": "success", "message": f"Successfully Uninstalled: '{mask_name(program_name)}'"}
+            if not check_command:
+                return {"status": "success", "message": f"Successfully Uninstalled: '{mask_name(program_name)}'"}
+            else:
+                logging.warning(f"Standard uninstall reported success, but '{mask_name(program_name)}' is still found. Proceeding to Step 2.")
 
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with exit code {e.returncode}.")
-            return self.forceful_uninstall_program(program_name, install_path, publisher)
+            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with exit code {e.returncode}. Proceeding to Step 2.")
         except subprocess.TimeoutExpired:
-            logging.warning(f"Standard Uninstall Timeout for '{mask_name(program_name)}'.")
-            return self.forceful_uninstall_program(program_name, install_path, publisher)
+            logging.warning(f"Standard Uninstall Timeout for '{mask_name(program_name)}'. Proceeding to Step 2.")
         except Exception as e:
-            # 일반적인 예외에서는 e를 직접 출력하지 않아 경로 노출 방지
-            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with an unexpected error.")
-            return self.forceful_uninstall_program(program_name, install_path, publisher)
+            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with an unexpected error. Proceeding to Step 2.")
+
+        # === 2단계: UI 기반 제거 시도 ===
+        logging.info(f"Step 2: UI-based Uninstall Methods for '{mask_name(program_name)}'")
+        
+        # MSI 기반인지 확인하고 MSI UI 시도
+        if 'msiexec' in uninstall_command.lower():
+            msi_result = self._attempt_msi_uninstall_with_ui(program_name)
+            if msi_result["status"] == "success":
+                return msi_result
+            elif msi_result["status"] == "ui_opened":
+                return {
+                    "status": "manual_required",
+                    "message": msi_result["message"],
+                    "ui_opened": True
+                }
+        
+        # Windows 설정 UI 열기 시도
+        ui_result = self._open_windows_uninstall_ui(program_name)
+        if ui_result["status"] == "ui_opened":
+            return {
+                "status": "manual_required",
+                "message": ui_result["message"],
+                "ui_opened": True
+            }
+        
+        # === 3단계: 강제 제거 (마지막 수단) ===
+        logging.warning(f"Step 3: Forceful Removal for '{mask_name(program_name)}' (All other methods failed)")
+        force_result = self.forceful_uninstall_program(program_name, install_path, publisher)
+        
+        # 강제 제거도 실패하면 수동 제거 안내
+        if force_result["status"] == "failure":
+            return {
+                "status": "manual_required",
+                "message": f"All automatic removal methods failed for '{mask_name(program_name)}'. Manual removal required via Windows Settings > Apps.",
+                "force_failed": True
+            }
+        
+        return force_result
 
     async def execute_cleanup(self, cleanup_list: List[Dict]) -> List[Dict]:
         final_results = []
@@ -476,7 +723,10 @@ class SystemExecutor:
                     "masked_name": item.get("masked_name"),
                     "path": item.get("path"),
                     "status": result_details.get("status"),
-                    "message": result_details.get("message")
+                    "message": result_details.get("message"),
+                    # 3단계를 거치는 로직에서 추가된 필드들
+                    "ui_opened": result_details.get("ui_opened", False),
+                    "force_failed": result_details.get("force_failed", False)
                 })
                 
         return final_results

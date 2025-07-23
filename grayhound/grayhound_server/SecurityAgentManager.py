@@ -251,12 +251,12 @@ class SecurityAgentManager:
             # 보호 프로그램 사전 체크
             if self._is_protected_program(program_name, publisher):
                 protected_count += 1
-                logging.debug(f"[PROTECTED] Skipping protected program: '{program_name}' (Publisher: {publisher})")
+                logging.debug(f"[PROTECTED] Skipping protected program: '{mask_name(program_name)}' (Publisher: {mask_name(publisher)})")
                 continue
 
             # 5. Enhanced 위협 DB의 각 항목과 비교
             for threat in threat_db:
-                logging.debug(f"[DEBUG] Comparing '{program_name}' with threat: {threat.get('program_name', 'Unknown')}")
+                logging.debug(f"[DEBUG] Comparing '{mask_name(program_name)}' with threat: {mask_name(threat.get('program_name', 'Unknown'))}")
                 
                 # Enhanced 매칭 로직 사용
                 is_detected, detection_reason = self._enhanced_threat_matching(program_name, threat)
@@ -264,7 +264,7 @@ class SecurityAgentManager:
                 # 탐지된 경우 위협 정보 추가
                 if is_detected:
                     current_risk = threat.get('risk_score', 0)
-                    logging.debug(f"[DEBUG] ✅ Successfully detected '{program_name}'! Risk: {current_risk}, Reason: {detection_reason}")
+                    logging.debug(f"[DEBUG] ✅ Successfully detected '{mask_name(program_name)}'! Risk: {current_risk}, Reason: {detection_reason}")
                     
                     if current_risk >= risk_threshold:
                         base_reason = threat.get('reason', 'Included in known bloatware/grayware list.')
@@ -287,11 +287,11 @@ class SecurityAgentManager:
                         identified_threats.append(threat_details)
                         already_identified_names.add(program_name_lower)
                         
-                        logging.info(f"[ENHANCED] Added to threats: '{program_name}' (Method: {detection_reason})")
+                        logging.info(f"[ENHANCED] Added to threats: '{mask_name(program_name)}' (Method: {detection_reason})")
                         # 하나의 프로그램은 하나의 위협으로만 매칭되면 되므로, 내부 루프를 탈출
                         break
                     else:
-                        logging.debug(f"[DEBUG] {program_name} detected but risk_score < {risk_threshold}")
+                        logging.debug(f"[DEBUG] {mask_name(program_name)} detected but risk_score < {risk_threshold}")
         
         # 6. 위험도가 높은 순으로 정렬하여 반환
         identified_threats.sort(key=lambda x: x['risk_score'], reverse=True)
@@ -339,39 +339,197 @@ class SecurityAgentManager:
             logging.error(f"[{self.session_id}] Error during enhanced system scan: {e}", exc_info=True)
             return {"error": f"Unexpected error occurred during enhanced system scan: {e}"}
     
-    async def execute_cleanup(self, cleanup_list: List[Dict], language: str = 'en') -> Dict[str, Any]:
-        """Local Agent에 최종 정리 목록을 전달하고, 실행 전후 성능 및 LLM 피드백을 포함한 최종 결과를 반환"""
+    async def execute_phase_a_cleanup(self, cleanup_list: List[Dict], language: str = 'en') -> Dict[str, Any]:
+        """Phase A: 1단계 기본 삭제만 수행"""
         try:
-            # Grayhound가 이해할 수 있는 형식으로 데이터 변환
+            # Grayhound Optimizer에 Phase A 전용 요청
             name_to_masked_name = {item["name"]: item.get("masked_name", mask_name(item["name"])) for item in cleanup_list}
 
             optimizer_cleanup_list = [{"name": item["name"], "command_type": "uninstall_program", "program_name": item["name"]} for item in cleanup_list]
-  
-            logging.info(f"[{self.session_id}] Local Agent에 {len(optimizer_cleanup_list)}개의 항목 정리 요청...")
+
+            logging.info(f"[{self.session_id}] Phase A: Requesting basic cleanup of {len(optimizer_cleanup_list)} items...")
             agent_results = await self.optimizer_client.execute_cleanup_plan(optimizer_cleanup_list)
             
             if agent_results is None:
-                return {"error": "Failed to execute cleanup. Unable to communicate with Local Agent."}
+                return {"error": "Failed to execute Phase A cleanup. Unable to communicate with Local Agent."}
 
+            # 결과 마스킹 처리
             comprehensive_results = []
             for res in agent_results:
                 original_name = res.get("name")
                 res["masked_name"] = name_to_masked_name.get(original_name, mask_name(original_name))
-                # 가이드를 위한 별도의 마스킹 이름 추가
                 res["guide_masked_name"] = mask_name_for_guide(original_name)
                 comprehensive_results.append(res)
-                
-            # LLM 피드백 생성 (언어 설정 전달)
-            llm_feedback = await self._generate_llm_feedback(comprehensive_results, language)
 
-            return {"results": comprehensive_results, "llm_feedback": llm_feedback}
+            # Phase A 전용 LLM 피드백 생성
+            phase_a_feedback = await self._generate_phase_a_feedback(comprehensive_results, language)
+
+            return {"results": comprehensive_results, "llm_feedback": phase_a_feedback}
 
         except Exception as e:
-            logging.error(f"[{self.session_id}] Error during threat removal: {e}", exc_info=True)
-            return {"error": f"Unexpected error occurred during threat removal: {e}"}
+            logging.error(f"[{self.session_id}] Error during Phase A cleanup: {e}", exc_info=True)
+            return {"error": f"Unexpected error occurred during Phase A cleanup: {e}"}
+
+    async def _generate_phase_a_feedback(self, cleanup_results: List, language: str = "en") -> str:
+        """Phase A 결과에 대한 LLM 피드백 생성"""
+        logging.info(f"Phase A feedback generation started... (language: {language}) 🌒")
+
+        if not cleanup_results:
+            return "Phase A 정리가 완료되었지만 항목이 없습니다." if language == 'ko' else "Phase A cleanup completed with no items."
+        
+        # Phase A 결과 분석
+        successful_items = [res.get('masked_name', res.get('name')) for res in cleanup_results if res.get('status') == 'success']
+        failed_items = [res.get('masked_name', res.get('name')) for res in cleanup_results if res.get('status') in ['phase_a_failed', 'failure']]
+        
+        # 언어에 따른 프롬프트 생성
+        prompts = {
+            'ko': f"""
+            PC 최적화 Phase A (기본 정리)가 완료되었습니다.
+            - Phase A에서 성공적으로 제거된 프로그램: {', '.join(successful_items) if successful_items else '없음'}
+            - Phase A에서 제거에 실패한 프로그램: {', '.join(failed_items) if failed_items else '없음'}
+
+            이 결과를 바탕으로, 사용자에게 Phase A 완료를 알리는 간결하고 명확한 리포트를 작성해주세요.
+            {f"실패한 항목들은 추가 단계(Phase B/C)에서 처리할 수 있다는 안내도 포함해주세요." if failed_items else ""}
+            전문적이고 친절한 톤으로 작성해주세요.
+
+            **중요: 반드시 한국어로 리포트를 작성해주세요.**
+            """,
+            'en': f"""
+            PC optimization Phase A (basic cleanup) has completed.
+            - Programs successfully removed in Phase A: {', '.join(successful_items) if successful_items else 'None'}
+            - Programs that failed to be removed in Phase A: {', '.join(failed_items) if failed_items else 'None'}
+
+            Based on this, write a concise and clear report informing the user of Phase A completion.
+            {f"Also mention that failed items can be handled in additional steps (Phase B/C)." if failed_items else ""}
+            Write in a professional and friendly tone.
+
+            **IMPORTANT: Please write the report in English.**
+            """,
+            'ja': f"""
+            PC最適化 Phase A（基本クリーンアップ）が完了しました。
+            - Phase Aで正常に削除されたプログラム: {', '.join(successful_items) if successful_items else 'なし'}
+            - Phase Aで削除に失敗したプログラム: {', '.join(failed_items) if failed_items else 'なし'}
+            
+            この結果をもとに、ユーザーに Phase A の完了を知らせる簡潔で明確なレポートを作成してください。
+            {f"失敗した項目は追加ステップ（Phase B/C）で処理できることも含めてください。" if failed_items else ""}
+            専門的で親切なトーンで書いてください。
+            
+            **重要: 必ず日本語でレポートを作成してください。**
+            """
+        }
+        
+        prompt = prompts.get(language, prompts['en'])
+        
+        # Google AI 클라이언트 호출
+        feedback = generate_text(prompt, temperature=0.5)
+        
+        if "An error occurred" in feedback:
+            default_messages = {
+                'ko': f"Phase A 완료! {len(successful_items)}개 프로그램이 제거되었습니다." + (f" {len(failed_items)}개 항목은 추가 단계가 필요합니다." if failed_items else ""),
+                'en': f"Phase A complete! {len(successful_items)} programs removed." + (f" {len(failed_items)} items need additional steps." if failed_items else ""),
+                'ja': f"Phase A 完了！{len(successful_items)}個のプログラムが削除されました。" + (f" {len(failed_items)}個の項目は追加ステップが必要です。" if failed_items else "")
+            }
+            return default_messages.get(language, default_messages['en'])
+            
+        logging.info("Phase A LLM 피드백 생성 완료!")
+        return feedback
+
+    async def _generate_comprehensive_feedback(self, all_results: List, language: str = "en") -> str:
+        """모든 Phase 결과를 종합한 포괄적 LLM 피드백 생성"""
+        logging.info(f"Comprehensive feedback generation started... (language: {language}) 🌒")
+
+        if not all_results:
+            return "정리할 항목이 없었습니다." if language == 'ko' else "No items were processed."
+        
+        # 결과를 Phase별로 분류
+        phase_a_success = []
+        phase_b_success = []
+        phase_c_success = []
+        total_failures = []
+        
+        for result in all_results:
+            name = result.get('masked_name', result.get('name', 'Unknown'))
+            status = result.get('status', 'unknown')
+            phase = result.get('phase_completed', 'unknown')
+            
+            if status == 'success':
+                if phase == 'phase_a':
+                    phase_a_success.append(name)
+                elif phase == 'phase_b':
+                    phase_b_success.append(name)
+                elif phase == 'phase_c':
+                    phase_c_success.append(name)
+            else:
+                total_failures.append(name)
+        
+        # 언어에 따른 포괄적 프롬프트 생성
+        prompts = {
+            'ko': f"""
+            Grayhound PC 최적화 작업이 완전히 완료되었습니다.
+
+            **단계별 제거 결과:**
+            - Phase A (기본 제거)에서 성공: {', '.join(phase_a_success) if phase_a_success else '없음'}
+            - Phase B (설정 앱 제거)에서 성공: {', '.join(phase_b_success) if phase_b_success else '없음'}
+            - Phase C (강제 제거)에서 성공: {', '.join(phase_c_success) if phase_c_success else '없음'}
+            - 모든 단계에서 실패: {', '.join(total_failures) if total_failures else '없음'}
+
+            이 결과를 바탕으로, 사용자에게 전체 최적화 작업의 완료를 알리는 포괄적이고 친절한 리포트를 작성해주세요.
+            각 단계에서 어떤 프로그램이 제거되었는지, 전반적으로 PC가 얼마나 깨끗해졌는지 강조해주세요.
+            실패한 항목이 있다면 수동 제거 방법도 간단히 안내해주세요.
+
+            **중요: 반드시 한국어로 리포트를 작성해주세요.**
+            """,
+            'en': f"""
+            Grayhound PC optimization has been fully completed.
+
+            **Step-by-step removal results:**
+            - Succeeded in Phase A (basic removal): {', '.join(phase_a_success) if phase_a_success else 'None'}
+            - Succeeded in Phase B (settings app removal): {', '.join(phase_b_success) if phase_b_success else 'None'}
+            - Succeeded in Phase C (force removal): {', '.join(phase_c_success) if phase_c_success else 'None'}
+            - Failed in all phases: {', '.join(total_failures) if total_failures else 'None'}
+
+            Based on this, write a comprehensive and friendly report informing the user of the completion of the entire optimization task.
+            Emphasize which programs were removed at each stage and how much cleaner the PC has become overall.
+            If there are failed items, also provide brief guidance on manual removal methods.
+
+            **IMPORTANT: Please write the report in English.**
+            """,
+            'ja': f"""
+            Grayhound PC最適化作業が完全に完了しました。
+
+            **段階別削除結果:**
+            - Phase A（基本削除）で成功: {', '.join(phase_a_success) if phase_a_success else 'なし'}
+            - Phase B（設定アプリ削除）で成功: {', '.join(phase_b_success) if phase_b_success else 'なし'}
+            - Phase C（強制削除）で成功: {', '.join(phase_c_success) if phase_c_success else 'なし'}
+            - 全ての段階で失敗: {', '.join(total_failures) if total_failures else 'なし'}
+
+            この結果をもとに、ユーザーに全体の最適化作業の完了を知らせる包括的で親切なレポートを作成してください。
+            各段階でどのプログラムが削除されたか、全体的にPCがどれだけクリーンになったかを強調してください。
+            失敗した項目がある場合は、手動削除方法も簡単に案内してください。
+
+            **重要: 必ず日本語でレポートを作成してください。**
+            """
+        }
+        
+        prompt = prompts.get(language, prompts['en'])
+        
+        # Google AI 클라이언트 호출
+        feedback = generate_text(prompt, temperature=0.5)
+        
+        if "An error occurred" in feedback:
+            total_success = len(phase_a_success) + len(phase_b_success) + len(phase_c_success)
+            default_messages = {
+                'ko': f"최적화 완료! 총 {total_success}개 프로그램이 제거되었습니다. PC가 더욱 깨끗해졌습니다!",
+                'en': f"Optimization complete! Total {total_success} programs removed. Your PC is now cleaner!",
+                'ja': f"最適化完了！合計{total_success}個のプログラムが削除されました。PCがよりクリーンになりました！"
+            }
+            return default_messages.get(language, default_messages['en'])
+            
+        logging.info("포괄적 LLM 피드백 생성 완료!")
+        return feedback
         
     async def _generate_llm_feedback(self, cleanup_results: List, language: str = "en") -> str:
-        """분석 결과를 바탕으로 사용자에게 제공할 LLM 피드백 생성"""
+        """분석 결과를 바탕으로 사용자에게 제공할 LLM (일반) 피드백 생성"""
         logging.info(f"LLM feedback generation started... (language: {language}) 🌒")
 
         if not cleanup_results:
