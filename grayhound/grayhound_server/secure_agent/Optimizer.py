@@ -12,9 +12,10 @@ import json
 import websockets
 from typing import Optional, Dict, Any, List, Tuple
 import time
-
+import signal
 import sys
-import os
+import atexit
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import mask_name
 
@@ -27,7 +28,48 @@ logging.basicConfig(
 
 # --- 기본 설정 ---
 HOST = 'localhost'
-PORT = 9002
+PORT = 9001
+
+# 서버 인스턴스를 전역 변수로 저장
+server = None
+
+def cleanup_on_exit():
+    """프로그램 종료 시 서버를 강제로 종료하고 포트를 해제"""
+    global server
+    if server:
+        try:
+            logging.info("프로그램 종료 시 서버 정리 중...")
+            # 현재 실행 중인 이벤트 루프가 있다면 사용, 없으면 새로 생성
+            try:
+                loop = asyncio.get_running_loop()
+                if not loop.is_closed():
+                    loop.create_task(server.close())
+                    loop.create_task(server.wait_closed())
+            except RuntimeError:
+                # 이벤트 루프가 실행 중이지 않으면 새로 생성
+                asyncio.run(server.close())
+                asyncio.run(server.wait_closed())
+        except Exception as e:
+            logging.error(f"종료 시 서버 정리 중 오류: {e}")
+        finally:
+            server = None
+
+# 프로그램 종료 시 자동으로 정리 함수 등록
+atexit.register(cleanup_on_exit)
+
+def signal_handler(signum, frame):
+    """시그널 핸들러: 서버를 안전하게 종료"""
+    logging.info("종료 시그널을 받았습니다. 서버를 안전하게 종료합니다...")
+    if server:
+        asyncio.create_task(server.close())
+        asyncio.create_task(server.wait_closed())
+    sys.exit(0)
+
+# Windows에서 지원하는 시그널만 등록
+if hasattr(signal, 'SIGINT'):
+    signal.signal(signal.SIGINT, signal_handler)
+if hasattr(signal, 'SIGTERM'):
+    signal.signal(signal.SIGTERM, signal_handler)
 
 # --- 시스템 프로파일러 클래스 ---
 class SystemProfiler:
@@ -406,103 +448,152 @@ class SystemExecutor:
             
             logging.info(f"Step 2: Opening Windows uninstall UI for '{mask_name(program_name)}'")
             
+            # 방법: Windows 설정 앱을 포그라운드로 실행
             try:
-                # 방법 1: Windows 설정 앱의 앱 및 기능 페이지 열기
+                # PowerShell을 이용해 설정 앱을 실행하고 포그라운드로 전환
+                powershell_script = '''
+                Start-Process "ms-settings:appsfeatures"
+                Start-Sleep -Seconds 2
+                $wshell = New-Object -ComObject wscript.shell
+                $null = $wshell.AppActivate('설정')
+                '''
                 subprocess.run([
-                    "start", "ms-settings:appsfeatures"
-                ], shell=True, check=True)
+                    "powershell", "-Command", powershell_script
+                ], check=True)
                 
                 # 설정 앱이 완전히 로드될 때까지 대기
-                time.sleep(3)
+                time.sleep(4)
                 
-                # PowerShell을 사용해 프로그램 검색
+                # PowerShell을 사용해 프로그램 검색 (포그라운드에서 실행)
                 search_script = f'''
                 Add-Type -AssemblyName System.Windows.Forms
                 Add-Type -AssemblyName System.Drawing
-                
-                # 설정 앱이 로드될 때까지 추가 대기
-                Start-Sleep -Milliseconds 1500
-                
-                # Tab 키를 여러 번 눌러서 앱 검색 필드로 이동
-                # (Windows 11에서는 보통 3번의 Tab으로 앱 검색 필드에 도달)
+                Start-Sleep -Seconds 2
                 [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}{{TAB}}{{TAB}}")
-                Start-Sleep -Milliseconds 500
-                
-                # 검색 필드가 활성화되면 기존 텍스트 지우고 프로그램명 입력
+                Start-Sleep -Seconds 1
                 [System.Windows.Forms.SendKeys]::SendWait("^a")
-                Start-Sleep -Milliseconds 300
+                Start-Sleep -Milliseconds 700
                 [System.Windows.Forms.SendKeys]::SendWait("{program_name}")
-                Start-Sleep -Milliseconds 500
-                
-                # Enter 키로 검색 실행
+                Start-Sleep -Seconds 1
                 [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
                 '''
-                
                 subprocess.run([
-                    "powershell", "-WindowStyle", "Hidden", "-Command", search_script
-                ], check=False)  # 검색이 실패해도 UI는 열렸으므로 check=False
-                
+                    "powershell", "-Command", search_script
+                ], check=False)
                 return {
                     "status": "ui_opened", 
-                    "message": f"Windows settings opened with search for '{mask_name(program_name)}'. Please proceed with manual uninstall."
+                    "message": f"Windows settings opened in foreground with search for '{mask_name(program_name)}'. Please proceed with manual uninstall."
                 }
-                
-            except subprocess.CalledProcessError:
-                # 방법 2: 제어판의 프로그램 추가/제거 열기 (대체 방법)
-                try:
-                    subprocess.run(["appwiz.cpl"], shell=True, check=True)
-                    
-                    # 제어판에서도 검색 시도
-                    time.sleep(2)
-                    control_panel_search = f'''
-                    Add-Type -AssemblyName System.Windows.Forms
-                    Start-Sleep -Milliseconds 1000
-                    [System.Windows.Forms.SendKeys]::SendWait("{program_name}")
-                    '''
-                    
-                    subprocess.run([
-                        "powershell", "-WindowStyle", "Hidden", "-Command", control_panel_search
-                    ], check=False)
-                    
-                    return {
-                        "status": "ui_opened",
-                        "message": f"Control Panel opened and searched for '{mask_name(program_name)}'. Please double-click the program to uninstall."
-                    }
-                except subprocess.CalledProcessError:
-                    # 방법 3: PowerShell을 통한 직접 앱 목록 표시
-                    try:
-                        ps_script = f'''
-                        # Windows 앱 목록을 GUI로 표시하고 특정 앱 하이라이트
-                        $apps = Get-WmiObject -Class Win32_Product | Where-Object {{$_.Name -like "*{program_name}*"}}
-                        if ($apps) {{
-                            $apps | Select-Object Name, Version, Vendor | Out-GridView -Title "Found Programs - Select to Uninstall" -PassThru | ForEach-Object {{
-                                $_.Uninstall()
-                            }}
-                        }} else {{
-                            [System.Windows.Forms.MessageBox]::Show("Program '{program_name}' not found in WMI. Please uninstall manually from Settings > Apps.", "Grayhound", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-                        }}
-                        '''
-                        
-                        subprocess.run([
-                            "powershell", "-ExecutionPolicy", "Bypass", "-Command", ps_script
-                        ], check=False)
-                        
-                        return {
-                            "status": "ui_opened",
-                            "message": f"PowerShell uninstall interface opened for '{mask_name(program_name)}'. Follow the prompts to uninstall."
-                        }
-                    except Exception:
-                        return {
-                            "status": "failure", 
-                            "message": f"All UI methods failed. Please manually go to Settings > Apps and uninstall '{mask_name(program_name)}'."
-                        }
-                
+
+            except Exception:
+                return {
+                    "status": "failure", 
+                    "message": f"Failed to open Windows Settings. Please manually go to Settings > Apps."
+                }
+    
         except Exception as e:
             logging.error(f"Failed to open uninstall UI for '{mask_name(program_name)}': {e}")
             return {
                 "status": "failure",
                 "message": f"Could not open uninstall UI: {str(e)}"
             }
+
+    def uninstall_program(self, program_name: str) -> Dict[str, Any]:
+        """Phase A용: 표준 제거만 시도 (UI 열지 않음)"""
+        
+        # 기본 정보 수집
+        uninstall_command, publisher, install_path = self.get_uninstall_info(program_name)
+        
+        if not uninstall_command:
+            # 정보가 없으면 실패로 처리 (UI 열지 않음)
+            logging.warning(f"Uninstall info not found for '{mask_name(program_name)}'.")
+            return {"status": "failure", "message": f"No uninstall information found for '{mask_name(program_name)}'"}
+                        
+        # 보호된 게시자 확인
+        if publisher and publisher.lower() in self.protected_publishers:
+            return {"status": "failure", "message": f"Protected Publisher: '{mask_name(program_name)}'"}
+        
+        logging.info(f"Phase A: Standard Uninstall Attempt for '{mask_name(program_name)}'")
+        
+        # === Phase A: 표준 제거만 시도 ===
+        try:
+            logging.info(f"Executing uninstall command for '{mask_name(program_name)}'")
+            result = subprocess.run(
+                uninstall_command, 
+                check=True, 
+                shell=True, 
+                capture_output=True, 
+                text=True,
+                startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW),
+                timeout=60
+            )
+            
+            # 제거 확인
+            time.sleep(2)
+            check_command, _, _ = self.get_uninstall_info(program_name)
+            if not check_command:
+                return {"status": "success", "message": f"Successfully Uninstalled: '{mask_name(program_name)}'"}
+            else:
+                # 명령은 성공했지만 프로그램이 여전히 존재 - 실패로 처리
+                return {"status": "failure", "message": f"Uninstall command executed but '{mask_name(program_name)}' still exists"}
+
+        except subprocess.CalledProcessError as e:
+            logging.warning(f"Standard uninstall failed for '{mask_name(program_name)}' with exit code {e.returncode}")
+            return {"status": "failure", "message": f"Uninstall failed with exit code {e.returncode}"}
+        except subprocess.TimeoutExpired:
+            logging.warning(f"Standard uninstall timeout for '{mask_name(program_name)}'")
+            return {"status": "failure", "message": "Uninstall process timeout"}
+        except Exception as e:
+            logging.warning(f"Standard uninstall error for '{mask_name(program_name)}': {e}")
+            return {"status": "failure", "message": str(e)}
+
+    async def execute_phase_b_uninstall(self, program_name: str) -> Dict[str, Any]:
+        """Phase B: UI 기반 제거"""
+        result = self._open_windows_uninstall_ui(program_name)
+        result["phase_completed"] = "phase_b"
+        return result
+
+    async def execute_phase_c_uninstall(self, program_name: str) -> Dict[str, Any]:
+        """Phase C: 강제 제거"""
+        _, publisher, install_path = self.get_uninstall_info(program_name)
+        
+        # 정보가 없으면 SystemProfiler로 추가 정보 찾기
+        if not publisher or not install_path:
+            profiler = SystemProfiler()
+            all_programs = profiler.get_installed_programs()
+            found = next((p for p in all_programs if p['name'].lower() == program_name.lower()), None)
+            if found:
+                publisher = found.get('publisher')
+                install_path = found.get('install_location')
+        
+        if not publisher and not install_path:
+            return {
+                "status": "failure",
+                "message": f"Cannot find any info for force removal of '{mask_name(program_name)}'",
+                "phase_completed": "phase_c"
+            }
+        
+        result = self.forceful_uninstall_program(program_name, install_path, publisher)
+        result["phase_completed"] = "phase_c"
+        return result
+
+    async def execute_cleanup(self, cleanup_list: List[Dict]) -> List[Dict]:
+        """Phase A 전용 cleanup 실행"""
+        final_results = []
+        for item in cleanup_list:
+            if item.get('command_type') == 'uninstall_program':
+                # Phase A: 표준 제거만
+                result_details = await asyncio.to_thread(self.uninstall_program, item["program_name"])
+                final_results.append({
+                    "name": item.get("name"),
+                    "masked_name": item.get("masked_name"),
+                    "path": item.get("path"),
+                    "status": result_details.get("status"),
+                    "message": result_details.get("message"),
+                    "phase_completed": "phase_a"
+                })
+                
+        return final_results
 
     def _find_product_code(self, program_name: str) -> Optional[str]:
         """레지스트리에서 MSI ProductCode 찾기 (MSI 기반 프로그램용)"""
@@ -615,124 +706,8 @@ class SystemExecutor:
             final_message += f" and cleaned {clean_count} registry entries"
         return {"status": "success", "message": final_message}
 
-    def uninstall_program(self, program_name: str) -> Dict[str, Any]:
-        """Enhanced 3단계 프로그램 제거 로직"""
-        
-        # 기본 정보 수집
-        uninstall_command, publisher, install_path = self.get_uninstall_info(program_name)
-        
-        if not uninstall_command:
-            logging.warning(f"Uninstall info not found for '{mask_name(program_name)}'. Trying UI methods...")
-            
-            # 정보가 없어도 UI 열기 시도
-            ui_result = self._open_windows_uninstall_ui(program_name)
-            if ui_result["status"] == "ui_opened":
-                return {
-                    "status": "manual_required",
-                    "message": ui_result["message"],
-                    "ui_opened": True
-                }
-            
-            # UI 열기도 실패하면 기존 강제 제거 로직으로
-            if not publisher or not install_path:
-                # SystemProfiler로 추가 정보 찾기
-                profiler = SystemProfiler()
-                all_programs = profiler.get_installed_programs()
-                found = next((p for p in all_programs if p['name'].lower() == program_name.lower()), None)
-                if found:
-                    publisher = found.get('publisher')
-                    install_path = found.get('install_location')
-            
-            if publisher or install_path:
-                return self.forceful_uninstall_program(program_name, install_path, publisher)
-            else:
-                return {"status": "failure", "message": f"Cannot find any info to remove '{mask_name(program_name)}'"}
-                
-        # 보호된 게시자 확인
-        if publisher and publisher.lower() in self.protected_publishers:
-            return {"status": "failure", "message": f"Protected Publisher: '{mask_name(program_name)}'"}
-        
-        logging.info(f"Starting Enhanced 3-Step Uninstall for '{mask_name(program_name)}'")
-        
-        # === 1단계: 표준 제거 시도 ===
-        try:
-            logging.info(f"Step 1: Standard Uninstall Attempt for '{mask_name(program_name)}'")
-            subprocess.run(uninstall_command, check=True, shell=True, capture_output=True, text=True, 
-                         startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW), timeout=60)
-            
-            # 제거 후에도 프로그램 정보가 남아있는지 확인하여 실제 성공 여부 판단
-            time.sleep(2) 
-            check_command, _, _ = self.get_uninstall_info(program_name)
-            if not check_command:
-                return {"status": "success", "message": f"Successfully Uninstalled: '{mask_name(program_name)}'"}
-            else:
-                logging.warning(f"Standard uninstall reported success, but '{mask_name(program_name)}' is still found. Proceeding to Step 2.")
-
-        except subprocess.CalledProcessError as e:
-            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with exit code {e.returncode}. Proceeding to Step 2.")
-        except subprocess.TimeoutExpired:
-            logging.warning(f"Standard Uninstall Timeout for '{mask_name(program_name)}'. Proceeding to Step 2.")
-        except Exception as e:
-            logging.warning(f"Standard Uninstall Failed for '{mask_name(program_name)}' with an unexpected error. Proceeding to Step 2.")
-
-        # === 2단계: UI 기반 제거 시도 ===
-        logging.info(f"Step 2: UI-based Uninstall Methods for '{mask_name(program_name)}'")
-        
-        # MSI 기반인지 확인하고 MSI UI 시도
-        if 'msiexec' in uninstall_command.lower():
-            msi_result = self._attempt_msi_uninstall_with_ui(program_name)
-            if msi_result["status"] == "success":
-                return msi_result
-            elif msi_result["status"] == "ui_opened":
-                return {
-                    "status": "manual_required",
-                    "message": msi_result["message"],
-                    "ui_opened": True
-                }
-        
-        # Windows 설정 UI 열기 시도
-        ui_result = self._open_windows_uninstall_ui(program_name)
-        if ui_result["status"] == "ui_opened":
-            return {
-                "status": "manual_required",
-                "message": ui_result["message"],
-                "ui_opened": True
-            }
-        
-        # === 3단계: 강제 제거 (마지막 수단) ===
-        logging.warning(f"Step 3: Forceful Removal for '{mask_name(program_name)}' (All other methods failed)")
-        force_result = self.forceful_uninstall_program(program_name, install_path, publisher)
-        
-        # 강제 제거도 실패하면 수동 제거 안내
-        if force_result["status"] == "failure":
-            return {
-                "status": "manual_required",
-                "message": f"All automatic removal methods failed for '{mask_name(program_name)}'. Manual removal required via Windows Settings > Apps.",
-                "force_failed": True
-            }
-        
-        return force_result
-
-    async def execute_cleanup(self, cleanup_list: List[Dict]) -> List[Dict]:
-        final_results = []
-        for item in cleanup_list:
-            if item.get('command_type') == 'uninstall_program':
-                result_details = await asyncio.to_thread(self.uninstall_program, item["program_name"])
-                final_results.append({
-                    "name": item.get("name"),
-                    "masked_name": item.get("masked_name"),
-                    "path": item.get("path"),
-                    "status": result_details.get("status"),
-                    "message": result_details.get("message"),
-                    # 3단계를 거치는 로직에서 추가된 필드들
-                    "ui_opened": result_details.get("ui_opened", False),
-                    "force_failed": result_details.get("force_failed", False)
-                })
-                
-        return final_results
-
 async def handler(websocket):
-    """클라이언트(Grayhound_CLI)와의 통신을 담당하는 핸들러"""
+    """클라이언트(Grayhound)와의 통신을 담당하는 핸들러"""
     logging.info(f"지휘 본부 연결됨 🐺🐾: {websocket.remote_address}")
     try:
         async for message in websocket:
@@ -748,13 +723,74 @@ async def handler(websocket):
                 logging.info("시스템 프로필 데이터를 지휘 본부로 전송 완료 🐾.")
 
             elif command == "cleanup":
+                # Phase A: 기본 정리
                 cleanup_list = data.get("list", [])
-                logging.info(f"{len(cleanup_list)}개 항목에 대한 정리 작업 시작 🐾.")
+                logging.info(f"{len(cleanup_list)}개 항목에 대한 Phase A 정리 작업 시작 🐾.")
                 executor = SystemExecutor(dry_run=False)
                 cleanup_results = await executor.execute_cleanup(cleanup_list)
                 response = {"type": "cleanup_result", "data": cleanup_results}
                 await websocket.send(json.dumps(response))
-                logging.info("정리 작업 완료 및 결과 전송 🐾.")
+                logging.info("Phase A 정리 작업 완료 및 결과 전송 🐾.")
+
+            elif command == "phase_b_cleanup":
+                # Phase B: UI 기반 정리
+                cleanup_list = data.get("list", [])
+                logging.info(f"Phase B: {len(cleanup_list)}개 항목에 대한 UI 기반 정리 🐾.")
+                executor = SystemExecutor(dry_run=False)
+                phase_b_results = []
+                
+                for item in cleanup_list:
+                    result = executor._open_windows_uninstall_ui(item["name"])
+                    phase_b_results.append({
+                        "name": item["name"],
+                        "status": result.get("status"),
+                        "message": result.get("message"),
+                        "ui_opened": result.get("status") == "ui_opened",
+                        "phase_completed": "phase_b"
+                    })
+                
+                response = {"type": "phase_b_result", "data": phase_b_results}
+                await websocket.send(json.dumps(response))
+                logging.info("Phase B 완료 및 결과 전송 🐾.")
+
+            elif command == "phase_c_cleanup":
+                # Phase C: 강제 정리
+                cleanup_list = data.get("list", [])
+                logging.info(f"Phase C: {len(cleanup_list)}개 항목에 대한 강제 정리 🐾.")
+                executor = SystemExecutor(dry_run=False)
+                phase_c_results = []
+                
+                for item in cleanup_list:
+                    # 강제 제거를 위한 정보 수집
+                    _, publisher, install_path = executor.get_uninstall_info(item["name"])
+                    
+                    if not publisher or not install_path:
+                        # SystemProfiler로 추가 정보 찾기
+                        profiler = SystemProfiler()
+                        all_programs = profiler.get_installed_programs()
+                        found = next((p for p in all_programs if p['name'].lower() == item["name"].lower()), None)
+                        if found:
+                            publisher = found.get('publisher')
+                            install_path = found.get('install_location')
+                    
+                    if publisher or install_path:
+                        result = executor.forceful_uninstall_program(item["name"], install_path, publisher)
+                    else:
+                        result = {
+                            "status": "failure",
+                            "message": f"Cannot find info for force removal of '{mask_name(item['name'])}'"
+                        }
+                    
+                    phase_c_results.append({
+                        "name": item["name"],
+                        "status": result.get("status"),
+                        "message": result.get("message"),
+                        "phase_completed": "phase_c"
+                    })
+                
+                response = {"type": "phase_c_result", "data": phase_c_results}
+                await websocket.send(json.dumps(response))
+                logging.info("Phase C 완료 및 결과 전송 🐾.")
 
     except websockets.exceptions.ConnectionClosed:
         logging.info(f"지휘 본부 연결 종료 🐾: {websocket.remote_address}")
@@ -765,12 +801,35 @@ async def handler(websocket):
 
 async def main():
     """WebSocket 서버를 시작하는 메인 함수"""
-    async with websockets.serve(handler, HOST, PORT):
+    global server
+    try:
+        server = await websockets.serve(handler, HOST, PORT)
         logging.info(f"정찰병 늑대 에이전트가 {HOST}:{PORT}에서 대기 중... 아우--- 🐺🐾")
         await asyncio.Future()
+    except Exception as e:
+        logging.error(f"서버 시작 중 오류 발생: {e}")
+        if server:
+            await server.close()
+            await server.wait_closed()
+        sys.exit(1)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logging.info("사용자 요청으로 서버를 종료합니다. 잘 가! 🤗")
+        if server:
+            try:
+                asyncio.run(server.close())
+                asyncio.run(server.wait_closed())
+            except Exception as close_error:
+                logging.error(f"서버 종료 중 오류: {close_error}")
+    except Exception as e:
+        logging.error(f"예상치 못한 오류 발생: {e}")
+        if server:
+            try:
+                asyncio.run(server.close())
+                asyncio.run(server.wait_closed())
+            except Exception as close_error:
+                logging.error(f"서버 종료 중 오류: {close_error}")
+        sys.exit(1)

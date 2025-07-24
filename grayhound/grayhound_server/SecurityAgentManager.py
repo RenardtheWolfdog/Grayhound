@@ -144,40 +144,52 @@ class SecurityAgentManager:
             return True, f"exact match with {threat_info}"
         
         # 2. 부분 문자열 포함
-        if generic_name and len(generic_name) >= 3:
-            if generic_name in program_lower or program_lower in generic_name:
-                return True, f"substring match with generic_name '{generic_name}'"
-        
+        if generic_name and len(generic_name) >= 5:
+            # 단순 포함이 아닌, 의미있는 부분 매칭인지 확인
+            if generic_name in program_lower:
+                # generic_name이 프로그램명의 상당 부분을 차지하는지 확인
+                if len(generic_name) / len(program_lower) >= 0.5:  # 50% 이상 차지
+                    return True, f"significant substring match with generic_name '{generic_name}'"
+            
         # 3. 정규화된 이름 기반 매칭
         db_normalized = self._normalize_program_name(threat_data.get('program_name', ''))
-        if program_normalized and db_normalized and len(program_normalized) >= 4:
-            if program_normalized == db_normalized:
-                return True, f"normalized exact match: '{program_normalized}'"
+        if program_normalized and db_normalized and program_normalized == db_normalized:
+            return True, f"normalized exact match: '{program_normalized}'"
         
-        # 4. 브랜드 키워드 기반 매칭
+    # 4. 브랜드 키워드 기반 매칭 (조건 강화)
         if brand_keywords and len(brand_keywords) > 0:
+            matched_keywords = 0  # 변수 초기화
+            total_valid_keywords = 0  # 유효한 키워드 수 추적
+            
             for brand_keyword in brand_keywords:
                 if isinstance(brand_keyword, str) and len(brand_keyword) >= 4:
                     brand_lower = brand_keyword.lower()
+                    total_valid_keywords += 1
                     
                     # 보호된 브랜드는 절대 매칭하지 않음
-                    protected_brands = {'microsoft', 'nvidia', 'intel', 'amd', 'google', 'apple', 'adobe'}
+                    protected_brands = {'microsoft', 'nvidia', 'intel', 'amd', 'google', 'apple', 'adobe', 'windows'}
                     if brand_lower in protected_brands:
                         continue
                     
-                    # 단어 경계를 사용한 정확한 매칭만 허용
+                    # 단어 경계를 사용한 정확한 매칭
                     pattern = r'\b' + re.escape(brand_lower) + r'\b'
                     if re.search(pattern, program_lower):
-                        return True, f"brand keyword exact word match: '{brand_keyword}'"
-        
+                        matched_keywords += 1
+            
+            # 브랜드 키워드는 2개 이상 매칭되어야 함 (단일 키워드 매칭은 부정확할 수 있음)
+            # 유효한 키워드가 있고 매칭된 경우에만 처리
+            if matched_keywords > 0:
+                if matched_keywords >= 2 or (matched_keywords == 1 and total_valid_keywords == 1):
+                    return True, f"brand keyword match: {matched_keywords} keywords matched"
+            
         # 5. 대체명 기반 매칭
         if alternative_names:
             for alt_name in alternative_names:
-                if isinstance(alt_name, str) and len(alt_name) >= 3:
+                if isinstance(alt_name, str) and len(alt_name) >= 5:
                     alt_lower = alt_name.lower()
                     alt_normalized = self._normalize_program_name(alt_name)
                         
-                    # 정확한 매칭만 허용
+                    # 정확한 매칭만 허용 또는 정규화된 매칭만 허용
                     if (program_lower == alt_lower or 
                         (alt_normalized and program_normalized == alt_normalized)):
                         return True, f"alternative name exact match: '{alt_name}'"
@@ -200,11 +212,22 @@ class SecurityAgentManager:
             if program_lower in db_process_list:
                 return True, f"process name exact match"
             
-            # 부분 매칭 (3글자 이상)
+            # 프로세스명 부분 매칭은 더 엄격하게 (최소 5글자 이상)
             for proc in db_process_list:
-                if len(proc) > 3 and (proc in program_lower or program_lower in proc):
-                    return True, f"process name partial match: '{proc}'"
-                
+                if len(proc) >= 5:
+                    # 프로세스명이 프로그램명의 핵심 부분인지 확인
+                    if proc in program_lower and len(proc) / len(program_lower) >= 0.4:  # 40% 이상
+                        return True, f"process name core match: '{proc}'"
+        
+        # 7. 추가 안전장치: 게시자명 확인 (동일 게시자의 제품인 경우)
+        if publisher and len(publisher) >= 4:
+            # 게시자명이 프로그램명에 포함되어 있고, DB의 게시자와 일치하는 경우
+            publisher_pattern = r'\b' + re.escape(publisher) + r'\b'
+            if re.search(publisher_pattern, program_lower, re.IGNORECASE):
+                # 하지만 이것만으로는 부족하므로, 추가 조건 확인
+                if generic_name and len(generic_name) >= 4 and generic_name in program_lower:
+                    return True, f"publisher + generic name match: '{publisher}'"
+                    
         return False, "no match found"
 
     def _analyze_threats(self, profile: Dict, threat_db: List[Dict], ignore_list: List[str], risk_threshold: int) -> List[Dict]:
@@ -375,7 +398,7 @@ class SecurityAgentManager:
         logging.info(f"Phase A feedback generation started... (language: {language}) 🌒")
 
         if not cleanup_results:
-            return "Phase A 정리가 완료되었지만 항목이 없습니다." if language == 'ko' else "Phase A cleanup completed with no items."
+            return "Phase A cleanup completed with no items."
         
         # Phase A 결과 분석
         successful_items = [res.get('masked_name', res.get('name')) for res in cleanup_results if res.get('status') == 'success']
@@ -415,6 +438,17 @@ class SecurityAgentManager:
             専門的で親切なトーンで書いてください。
             
             **重要: 必ず日本語でレポートを作成してください。**
+            """,
+            'zh': f"""
+            PC 优化 Phase A（基本清理）已完成。
+            - Phase A 中成功删除的程序: {', '.join(successful_items) if successful_items else '无'}
+            - Phase A 中删除失败的程序: {', '.join(failed_items) if failed_items else '无'}
+            
+            基于此结果，撰写一份简洁明了的报告，告知用户 Phase A 的完成情况。
+            {f"也请提及失败的项目可以在后续步骤（Phase B/C）中处理。" if failed_items else ""}
+            以专业和友好的语气撰写。
+            
+            **重要：请务必用中文撰写报告。**
             """
         }
         
@@ -427,7 +461,8 @@ class SecurityAgentManager:
             default_messages = {
                 'ko': f"Phase A 완료! {len(successful_items)}개 프로그램이 제거되었습니다." + (f" {len(failed_items)}개 항목은 추가 단계가 필요합니다." if failed_items else ""),
                 'en': f"Phase A complete! {len(successful_items)} programs removed." + (f" {len(failed_items)} items need additional steps." if failed_items else ""),
-                'ja': f"Phase A 完了！{len(successful_items)}個のプログラムが削除されました。" + (f" {len(failed_items)}個の項目は追加ステップが必要です。" if failed_items else "")
+                'ja': f"Phase A 完了！{len(successful_items)}個のプログラムが削除されました。" + (f" {len(failed_items)}個の項目は追加ステップが必要です。" if failed_items else ""),
+                'zh': f"Phase A 完成！{len(successful_items)}个程序被删除。" + (f" {len(failed_items)}个项目需要额外步骤。" if failed_items else "")
             }
             return default_messages.get(language, default_messages['en'])
             
@@ -439,12 +474,13 @@ class SecurityAgentManager:
         logging.info(f"Comprehensive feedback generation started... (language: {language}) 🌒")
 
         if not all_results:
-            return "정리할 항목이 없었습니다." if language == 'ko' else "No items were processed."
+            return "No items were processed."
         
         # 결과를 Phase별로 분류
         phase_a_success = []
         phase_b_success = []
         phase_c_success = []
+        not_removed = [] # 제거 실패 항목
         total_failures = []
         
         for result in all_results:
@@ -455,59 +491,82 @@ class SecurityAgentManager:
             if status == 'success':
                 if phase == 'phase_a':
                     phase_a_success.append(name)
-                elif phase == 'phase_b':
+                elif phase == 'phase_b' or phase == 'manual':
                     phase_b_success.append(name)
                 elif phase == 'phase_c':
                     phase_c_success.append(name)
+            elif phase == 'skipped' or status == 'still_exists':
+                not_removed.append(name)
             else:
                 total_failures.append(name)
         
         # 언어에 따른 포괄적 프롬프트 생성
         prompts = {
             'ko': f"""
-            Grayhound PC 최적화 작업이 완전히 완료되었습니다.
+            Grayhound PC 최적화 작업이 완료되었습니다.
 
             **단계별 제거 결과:**
             - Phase A (기본 제거)에서 성공: {', '.join(phase_a_success) if phase_a_success else '없음'}
-            - Phase B (설정 앱 제거)에서 성공: {', '.join(phase_b_success) if phase_b_success else '없음'}
+            - Phase B (Windows 설정)에서 성공: {', '.join(phase_b_success) if phase_b_success else '없음'}
             - Phase C (강제 제거)에서 성공: {', '.join(phase_c_success) if phase_c_success else '없음'}
-            - 모든 단계에서 실패: {', '.join(total_failures) if total_failures else '없음'}
+            - 제거되지 않음 (사용자 선택): {', '.join(not_removed) if not_removed else '없음'}
+            - 모든 방법으로 제거 실패: {', '.join(total_failures) if total_failures else '없음'}
 
             이 결과를 바탕으로, 사용자에게 전체 최적화 작업의 완료를 알리는 포괄적이고 친절한 리포트를 작성해주세요.
-            각 단계에서 어떤 프로그램이 제거되었는지, 전반적으로 PC가 얼마나 깨끗해졌는지 강조해주세요.
-            실패한 항목이 있다면 수동 제거 방법도 간단히 안내해주세요.
+            각 단계에서 어떤 프로그램이 어떻게 제거되었는지 명확히 설명하고, 
+            제거되지 않은 항목은 사용자가 의도적으로 남겨둔 것일 수 있다는 점을 언급해주세요.
+            전반적으로 PC가 얼마나 깨끗해졌는지 강조해주세요.
 
             **중요: 반드시 한국어로 리포트를 작성해주세요.**
             """,
             'en': f"""
-            Grayhound PC optimization has been fully completed.
+            Grayhound PC optimization has been completed.
 
             **Step-by-step removal results:**
             - Succeeded in Phase A (basic removal): {', '.join(phase_a_success) if phase_a_success else 'None'}
-            - Succeeded in Phase B (settings app removal): {', '.join(phase_b_success) if phase_b_success else 'None'}
+            - Succeeded in Phase B (Windows Settings): {', '.join(phase_b_success) if phase_b_success else 'None'}
             - Succeeded in Phase C (force removal): {', '.join(phase_c_success) if phase_c_success else 'None'}
-            - Failed in all phases: {', '.join(total_failures) if total_failures else 'None'}
+            - Not removed (user choice): {', '.join(not_removed) if not_removed else 'None'}
+            - Failed with all methods: {', '.join(total_failures) if total_failures else 'None'}
 
             Based on this, write a comprehensive and friendly report informing the user of the completion of the entire optimization task.
-            Emphasize which programs were removed at each stage and how much cleaner the PC has become overall.
-            If there are failed items, also provide brief guidance on manual removal methods.
+            Clearly explain which programs were removed at each stage,
+            and mention that items not removed may have been intentionally kept by the user.
+            Emphasize how much cleaner the PC has become overall.
 
             **IMPORTANT: Please write the report in English.**
             """,
             'ja': f"""
-            Grayhound PC最適化作業が完全に完了しました。
+            Grayhound PC最適化作業が完了しました。
 
             **段階別削除結果:**
             - Phase A（基本削除）で成功: {', '.join(phase_a_success) if phase_a_success else 'なし'}
-            - Phase B（設定アプリ削除）で成功: {', '.join(phase_b_success) if phase_b_success else 'なし'}
+            - Phase B（Windows設定）で成功: {', '.join(phase_b_success) if phase_b_success else 'なし'}
             - Phase C（強制削除）で成功: {', '.join(phase_c_success) if phase_c_success else 'なし'}
-            - 全ての段階で失敗: {', '.join(total_failures) if total_failures else 'なし'}
+            - 削除されず（ユーザーの選択）: {', '.join(not_removed) if not_removed else 'なし'}
+            - 全ての方法で失敗: {', '.join(total_failures) if total_failures else 'なし'}
 
             この結果をもとに、ユーザーに全体の最適化作業の完了を知らせる包括的で親切なレポートを作成してください。
-            各段階でどのプログラムが削除されたか、全体的にPCがどれだけクリーンになったかを強調してください。
-            失敗した項目がある場合は、手動削除方法も簡単に案内してください。
+            各段階でどのプログラムがどのように削除されたかを明確に説明し、
+            削除されなかった項目はユーザーが意図的に残したものである可能性があることに言及してください。
+            全体的にPCがどれだけクリーンになったかを強調してください。
 
             **重要: 必ず日本語でレポートを作成してください。**
+            """,
+            'zh': f"""
+            PC 优化任务 'Grayhound' 刚刚完成。
+            - Phase A 中成功删除的程序: {', '.join(phase_a_success) if phase_a_success else '无'}
+            - Phase B 中成功删除的程序: {', '.join(phase_b_success) if phase_b_success else '无'}
+            - Phase C 中成功删除的程序: {', '.join(phase_c_success) if phase_c_success else '无'}
+            - 未删除 (用户选择): {', '.join(not_removed) if not_removed else '无'}
+            - 所有阶段都失败: {', '.join(total_failures) if total_failures else '无'}
+
+            基于此结果，撰写一份简洁明了的报告，告知用户整个优化任务的完成情况。
+            明确说明每个阶段删除了哪些程序，并提及未删除的项目可能是用户有意保留的。
+            强调整体上PC变得有多干净。
+            如果存在未删除的项目，也请提供简单的手动删除方法。
+
+            **重要：请务必用中文撰写报告。**
             """
         }
         
@@ -521,7 +580,8 @@ class SecurityAgentManager:
             default_messages = {
                 'ko': f"최적화 완료! 총 {total_success}개 프로그램이 제거되었습니다. PC가 더욱 깨끗해졌습니다!",
                 'en': f"Optimization complete! Total {total_success} programs removed. Your PC is now cleaner!",
-                'ja': f"最適化完了！合計{total_success}個のプログラムが削除されました。PCがよりクリーンになりました！"
+                'ja': f"最適化完了！合計{total_success}個のプログラムが削除されました。PCがよりクリーンになりました！",
+                'zh': f"优化完成！总共{total_success}个程序被删除。您的电脑现在应该更干净了！"
             }
             return default_messages.get(language, default_messages['en'])
             

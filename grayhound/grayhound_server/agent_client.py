@@ -95,11 +95,31 @@ class OptimizerAgentClient:
         return None
 
     async def execute_cleanup_plan(self, cleanup_list: List[Dict]) -> Optional[List]:
-        """에이전트에게 정리 계획을 전달하고 실행 결과를 반환."""
+        """에이전트에게 정리 계획을 전달하고 실행 결과를 반환. (Phase A용)"""
         logging.info("시스템 정리 요청 시작...")
         command = {"command": "cleanup", "list": cleanup_list}
-        response = await self._execute_task(command, timeout=300) # 제거 작업은 시간이 더 걸릴 수 있음
+        response = await self._execute_task(command, timeout=300)
         if response and response.get("type") == "cleanup_result":
             return response.get("data")
         logging.error(f"유효한 정리 결과를 받지 못했습니다: {response}")
+        return None
+    
+    async def execute_phase_b_cleanup(self, cleanup_list: List[Dict]) -> Optional[List[Dict]]:
+        """Phase B: UI 기반 정리 실행"""
+        logging.info("Phase B: UI 기반 정리 요청 시작...")
+        command = {"command": "phase_b_cleanup", "list": cleanup_list}
+        response = await self._execute_task(command, timeout=300)
+        if response and response.get("type") == "phase_b_result":
+            return response.get("data")
+        logging.error(f"유효한 Phase B 결과를 받지 못했습니다: {response}")
+        return None
+
+    async def execute_phase_c_cleanup(self, cleanup_list: List[Dict]) -> Optional[List[Dict]]:
+        """Phase C: 강제 정리 실행"""
+        logging.info("Phase C: 강제 정리 요청 시작...")
+        command = {"command": "phase_c_cleanup", "list": cleanup_list}
+        response = await self._execute_task(command, timeout=300)
+        if response and response.get("type") == "phase_c_result":
+            return response.get("data")
+        logging.error(f"유효한 Phase C 결과를 받지 못했습니다: {response}")
         return None

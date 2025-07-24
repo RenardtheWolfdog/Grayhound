@@ -233,3 +233,224 @@
     max-width: 500px;
   }
 }
+
+// Phase B 컨테이너
+.phase-b-container {
+  padding: 20px;
+  background-color: #1e2128;
+  border-radius: 8px;
+  margin-top: 20px;
+
+  h3 {
+    color: #FF6B6B;
+    margin-bottom: 10px;
+    text-align: center;
+  }
+
+  .phase-description {
+    color: #bdc3c7;
+    margin-bottom: 20px;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .phase-b-items {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 20px;
+
+    .phase-b-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #2c3e50;
+      padding: 15px 20px;
+      border-radius: 6px;
+      border: 1px solid #34495e;
+      transition: all 0.3s ease;
+
+      &:hover {
+        border-color: #4a90e2;
+        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.2);
+      }
+
+      .program-name {
+        font-weight: 600;
+        color: #ecf0f1;
+        flex: 1;
+        margin-right: 20px;
+        font-size: 16px;
+      }
+
+      .action-buttons {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+
+        button {
+          padding: 8px 16px;
+          border: none;
+          border-radius: 4px;
+          font-size: 14px;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          font-weight: 500;
+          min-width: 120px;
+
+          &.phase-b-btn {
+            background-color: #4ECDC4;
+            color: white;
+
+            &:hover:not(:disabled) {
+              background-color: #3db5ac;
+              transform: translateY(-1px);
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+          }
+
+          &.phase-c-btn {
+            background-color: #e74c3c;
+            color: white;
+
+            &:hover:not(:disabled) {
+              background-color: #c0392b;
+              transform: translateY(-1px);
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+          }
+
+          &:disabled {
+            background-color: #555;
+            color: #999;
+            cursor: not-allowed;
+            opacity: 0.6;
+          }
+        }
+
+        .status-success {
+          color: #2ecc71;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 120px;
+          justify-content: center;
+        }
+
+        .status-failed {
+          color: #e74c3c;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 120px;
+          justify-content: center;
+        }
+      }
+    }
+  }
+
+  .phase-b-info {
+    background-color: #34495e;
+    border: 1px solid #4a90e2;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 20px;
+
+    .info-text {
+      color: #ecf0f1;
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+      
+      &::before {
+        content: "💡 ";
+      }
+    }
+  }
+
+  .phase-actions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    flex-wrap: wrap;
+
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+
+      &.check-btn {
+        background-color: #f39c12;
+        color: white;
+
+        &:hover {
+          background-color: #d68910;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(243, 156, 18, 0.3);
+        }
+      }
+
+      &.report-btn {
+        background-color: #4ECDC4;
+        color: white;
+
+        &:hover {
+          background-color: #3db5ac;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(78, 205, 196, 0.3);
+        }
+      }
+
+      &.back-btn {
+        background-color: #6c757d;
+        color: white;
+
+        &:hover {
+          background-color: #5a6268;
+          transform: translateY(-2px);
+        }
+      }
+    }
+  }
+}
+
+// 반응형 디자인
+@media (max-width: 768px) {
+  .phase-b-container {
+    padding: 15px;
+
+    .phase-b-items {
+      .phase-b-item {
+        flex-direction: column;
+        gap: 10px;
+        padding: 15px;
+
+        .program-name {
+          text-align: center;
+          margin-right: 0;
+          margin-bottom: 10px;
+        }
+
+        .action-buttons {
+          width: 100%;
+          justify-content: center;
+          flex-wrap: wrap;
+        }
+      }
+    }
+
+    .phase-actions {
+      flex-direction: column;
+
+      button {
+        width: 100%;
+      }
+    }
+  }
+}

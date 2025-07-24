@@ -19,8 +19,7 @@ timeout /t 5 > nul
 
 echo [4/4] Starting Grayhound Tauri Client...
 rem 클라이언트 디렉토리로 이동하여 Tauri 앱을 실행
-cd ../grayhound-client
-npm run tauri dev
+START "Grayhound Tauri Client" cmd /k "cd ../grayhound-client && npm run tauri dev"
 
 echo.
 echo All processes are launched. You can close this window.
