@@ -7,6 +7,14 @@
     font-size: 1.2rem;
   }
 
+  .info-text {
+    color: #95a5a6;
+    font-size: 14px;
+    font-style: italic;
+    margin-bottom: 15px;
+    text-align: center;
+  }
+
   .results-container {
     width: 100%;
     margin-top: 20px;
@@ -54,6 +62,22 @@
       strong {
         font-size: 1.1rem;
         color: #e0e0e0;
+        
+        &.program-name-interactive {
+          cursor: help;
+          -webkit-user-select: none;
+          user-select: none;
+          transition: color 0.2s ease;
+          
+          &:hover {
+            color: #4ECDC4;
+          }
+          
+          &:active {
+            color: #fff;
+            font-weight: bold;
+          }
+        }
       }
 
       .reason {
@@ -281,6 +305,38 @@
         flex: 1;
         margin-right: 20px;
         font-size: 16px;
+        
+        &.clickable {
+          cursor: pointer;
+          transition: color 0.2s ease;
+          position: relative;
+          
+          &:hover {
+            color: #4ECDC4;
+            text-decoration: underline;
+          }
+          
+          .copied-message {
+            position: absolute;
+            top: -25px;
+            left: 0;
+            background: #2ecc71;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: normal;
+            white-space: nowrap;
+            animation: fadeInOut 2s ease;
+          }
+          
+          @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(5px); }
+            20% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-5px); }
+          }
+        }
       }
 
       .action-buttons {
@@ -304,6 +360,17 @@
 
             &:hover:not(:disabled) {
               background-color: #3db5ac;
+              transform: translateY(-1px);
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+          }
+
+          &.verify-btn {
+            background-color: #f39c12;
+            color: white;
+
+            &:hover:not(:disabled) {
+              background-color: #d68910;
               transform: translateY(-1px);
               box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             }
@@ -385,11 +452,18 @@
       cursor: pointer;
       transition: all 0.3s ease;
 
+      &:disabled {
+        background-color: #555;
+        color: #999;
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
       &.check-btn {
         background-color: #f39c12;
         color: white;
 
-        &:hover {
+        &:hover:not(:disabled) {
           background-color: #d68910;
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(243, 156, 18, 0.3);
@@ -400,7 +474,7 @@
         background-color: #4ECDC4;
         color: white;
 
-        &:hover {
+        &:hover:not(:disabled) {
           background-color: #3db5ac;
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(78, 205, 196, 0.3);

@@ -105,7 +105,7 @@ class OptimizerAgentClient:
         return None
     
     async def execute_phase_b_cleanup(self, cleanup_list: List[Dict]) -> Optional[List[Dict]]:
-        """Phase B: UI 기반 정리 실행"""
+        """Phase B: UI 기반 정리 실행 (개선된 포그라운드 감지 포함)"""
         logging.info("Phase B: UI 기반 정리 요청 시작...")
         command = {"command": "phase_b_cleanup", "list": cleanup_list}
         response = await self._execute_task(command, timeout=300)

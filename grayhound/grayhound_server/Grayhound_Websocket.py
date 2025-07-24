@@ -250,17 +250,20 @@ async def phase_b_clean_workflow(websocket, items_to_clean_json: str, language: 
         from agent_client import OptimizerAgentClient
         optimizer_client = OptimizerAgentClient()
         
-        # Phase B 전용 cleanup 실행
+        # Phase B 전용 cleanup 실행 (개선된 UI 열기)
         phase_b_results = await optimizer_client.execute_phase_b_cleanup(items_to_clean)
 
         if phase_b_results is None:
             await emit_error(websocket, "Failed to execute Phase B cleanup.")
             return
 
-        # 결과 마스킹 처리
+        # 결과 마스킹 처리 및 자동화 상태 정보 추가
         for result in phase_b_results:
             result["masked_name"] = mask_name(result.get("name", ""))
             result["guide_masked_name"] = mask_name_for_guide(result.get("name", ""))
+            
+            # Optimizer에서 받은 자동화 상태 정보 유지
+            # automated, timeout 등의 필드가 있으면 그대로 전달
 
         await emit(websocket, "phase_b_complete", {
             "results": phase_b_results
@@ -308,6 +311,36 @@ async def phase_c_clean_workflow(websocket, items_to_clean_json: str, language: 
     except Exception as e:
         logging.error(f"Error during Phase C cleaning: {e}", exc_info=True)
         await emit_error(websocket, f"Phase C error: {e}")
+
+async def verify_removal_workflow(websocket, program_name: str):
+    """단일 프로그램이 실제로 제거되었는지 확인하는 워크플로우"""
+    try:
+        if not program_name:
+            await emit_error(websocket, "No program name provided for verification.")
+            return
+            
+        await emit_progress(websocket, f"🔍 Verifying removal of {mask_name(program_name)}...")
+        
+        # SystemProfiler를 통해 현재 설치된 프로그램 목록 확인
+        profiler = SystemProfiler()
+        current_programs = await profiler.create_system_profile()
+        installed_programs = current_programs.get("installed_programs", [])
+        
+        # 프로그램이 제거되었는지 확인
+        is_removed = not any(
+            p['name'].lower() == program_name.lower() 
+            for p in installed_programs
+        )
+        
+        await emit(websocket, "removal_verification", {
+            "program_name": program_name,
+            "is_removed": is_removed,
+            "message": f"{'Successfully removed' if is_removed else 'Still installed'}: {mask_name(program_name)}"
+        })
+        
+    except Exception as e:
+        logging.error(f"Error verifying removal status: {e}", exc_info=True)
+        await emit_error(websocket, f"Failed to verify removal status: {e}")
 
 # 포괄적 리포트 생성 워크플로우
 async def generate_comprehensive_report_workflow(websocket, all_results_json: str, language: str = "en"):
@@ -587,7 +620,8 @@ async def handler(websocket):
                     await generate_comprehensive_report_workflow(websocket, args[0] if args else "[]", language=language_arg)
                 elif command == "check_removal_status":
                     await check_removal_status_workflow(websocket, args[0] if args else "[]")
-                    
+                elif command == "verify_removal":
+                    await verify_removal_workflow(websocket, args[0] if args else "")
                 elif command == "force_clean":
                     language_arg = args[1] if len(args) > 1 else "en"
                     await force_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)

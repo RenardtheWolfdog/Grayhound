@@ -439,6 +439,35 @@ class SystemExecutor:
                 continue
         return None
     
+    def _is_settings_in_foreground(self) -> bool:
+        """Windows 설정이 포그라운드에 있는지 확인"""
+        try:
+            # ctypes를 사용한 포그라운드 윈도우 확인
+            import ctypes
+            from ctypes import wintypes
+            
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            
+            # 포그라운드 윈도우 핸들 가져오기
+            hwnd = user32.GetForegroundWindow()
+            
+            # 프로세스 ID 가져오기
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            
+            # 프로세스 이름 확인
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['pid'] == pid.value:
+                    proc_name = proc.info['name'].lower()
+                    # Windows 설정 관련 프로세스 이름들
+                    if any(name in proc_name for name in ['systemsettings', 'applicationframehost']):
+                        return True
+            return False
+        except Exception as e:
+            logging.debug(f"Error checking foreground window: {e}")
+            return False
+
     def _open_windows_uninstall_ui(self, program_name: str) -> Dict[str, Any]:
         """2단계: Windows 설정 앱의 언인스톨 UI를 직접 열기"""
         try:
@@ -448,47 +477,20 @@ class SystemExecutor:
             
             logging.info(f"Step 2: Opening Windows uninstall UI for '{mask_name(program_name)}'")
             
-            # 방법: Windows 설정 앱을 포그라운드로 실행
+            # Windows 설정 앱 실행 (앱 및 기능 페이지)
             try:
-                # PowerShell을 이용해 설정 앱을 실행하고 포그라운드로 전환
-                powershell_script = '''
-                Start-Process "ms-settings:appsfeatures"
-                Start-Sleep -Seconds 2
-                $wshell = New-Object -ComObject wscript.shell
-                $null = $wshell.AppActivate('설정')
-                '''
-                subprocess.run([
-                    "powershell", "-Command", powershell_script
-                ], check=True)
+                subprocess.Popen(["start", "ms-settings:appsfeatures"], shell=True)
+                logging.info("Windows Settings app launched")
                 
-                # 설정 앱이 완전히 로드될 때까지 대기
-                time.sleep(4)
-                
-                # PowerShell을 사용해 프로그램 검색 (포그라운드에서 실행)
-                search_script = f'''
-                Add-Type -AssemblyName System.Windows.Forms
-                Add-Type -AssemblyName System.Drawing
-                Start-Sleep -Seconds 2
-                [System.Windows.Forms.SendKeys]::SendWait("{{TAB}}{{TAB}}{{TAB}}")
-                Start-Sleep -Seconds 1
-                [System.Windows.Forms.SendKeys]::SendWait("^a")
-                Start-Sleep -Milliseconds 700
-                [System.Windows.Forms.SendKeys]::SendWait("{program_name}")
-                Start-Sleep -Seconds 1
-                [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
-                '''
-                subprocess.run([
-                    "powershell", "-Command", search_script
-                ], check=False)
                 return {
-                    "status": "ui_opened", 
-                    "message": f"Windows settings opened in foreground with search for '{mask_name(program_name)}'. Please proceed with manual uninstall."
+                    "status": "ui_opened",
+                    "message": f"Windows Settings opened. Please search for '{mask_name(program_name)}' manually."
                 }
 
-            except Exception:
+            except Exception as e:
                 return {
                     "status": "failure", 
-                    "message": f"Failed to open Windows Settings. Please manually go to Settings > Apps."
+                    "message": f"Failed to open Windows Settings: {str(e)}"
                 }
     
         except Exception as e:
