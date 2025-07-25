@@ -340,7 +340,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
       // 모두 성공 - 바로 최종 리포트 생성
       setProgressLog(prev => [...prev, t.allSuccessMessage]);
       ws.current?.send(JSON.stringify({
-        command: "generate_comprehensive_report",
+        command: "generate_final_report",
         args: [JSON.stringify(results), language]
       }));
     } else {
@@ -696,7 +696,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     });
     
     ws.current?.send(JSON.stringify({
-      command: "generate_comprehensive_report",
+      command: "generate_final_report",
       args: [JSON.stringify(finalResults), language]
     }));
   };
