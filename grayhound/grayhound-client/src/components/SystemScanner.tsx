@@ -828,8 +828,9 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
               id={`clean-${item.id}`} 
               checked={!!item.clean} 
               onChange={() => toggleClean(item.id)} 
+              aria-label={`Clean ${item.masked_name}`}
             />
-            <label htmlFor={`clean-${item.id}`}>
+            <div className="result-content">
               <strong 
                 className="program-name-interactive"
                 onMouseDown={() => handleProgramMouseDown(item.name)}
@@ -841,7 +842,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
                 {revealedPrograms.has(item.name) ? item.name : item.masked_name}
               </strong> (Risk: {item.risk_score})
               <span className="reason">{item.reason}</span>
-            </label>
+            </div>
           </div>
         ))}
       </div>

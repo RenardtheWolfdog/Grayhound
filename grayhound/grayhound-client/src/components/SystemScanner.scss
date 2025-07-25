@@ -53,10 +53,9 @@
       height: 18px;
     }
 
-    label {
+    .result-content {
       display: flex;
       flex-direction: column;
-      cursor: pointer;
       width: 100%;
 
       strong {
