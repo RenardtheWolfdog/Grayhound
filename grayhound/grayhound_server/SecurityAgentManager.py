@@ -305,7 +305,20 @@ class SecurityAgentManager:
                             "risk_score": current_risk,
                             "path": program.get('install_location') or program.get('path', 'N/A'),
                             "pid": program.get('pid', None),
-                            "detection_method": detection_reason  # 디버깅용: 탐지 방법 추가
+                            "detection_method": detection_reason,
+                            # 🔥 탐지 컨텍스트 추가
+                            "detection_context": {
+                                "matched_threat": threat,  # 매칭된 DB threat 전체 정보
+                                "program_type": "installed_program" if program in installed_programs else "running_process",
+                                "matched_fields": {  # 어떤 필드로 매칭되었는지
+                                    "program_name": program_name,
+                                    "db_program_name": threat.get('program_name', ''),
+                                    "generic_name": threat.get('generic_name', ''),
+                                    "process_names": threat.get('process_names', ''),
+                                    "brand_keywords": threat.get('brand_keywords', []),
+                                    "alternative_names": threat.get('alternative_names', [])
+                                }
+                            }
                         }
                         identified_threats.append(threat_details)
                         already_identified_names.add(program_name_lower)

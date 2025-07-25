@@ -1,6 +1,7 @@
 // src/components/DBUpdater.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import './DBUpdater.scss';
+import { useSettings } from '../contexts/SettingsContext';
 
 // --- 인터페이스 정의 ---
 interface Queries {
@@ -33,9 +34,26 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessFinished, setIsProcessFinished] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState('en');
+  const { language } = useSettings();
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const ws = useRef<WebSocket | null>(null);
+
+  // 현재 언어에 맞는 국가를 기본값으로 설정
+  const getDefaultCountry = () => {
+    switch (language) {
+      case 'ko':
+        return 'South Korea';
+      case 'en':
+        return 'USA';
+      case 'zh':
+        return 'China';
+      case 'ja':
+        return 'Japan';
+      default:
+        return 'USA';
+    }
+  };
 
   // 컴포넌트가 처음 마운트될 때 기본 언어를 설정
   useEffect(() => {
@@ -208,7 +226,7 @@ export const DBUpdater = ({ setCurrentView, setLanguage }: { setCurrentView: (vi
     <form onSubmit={handleGenerateQueries}>
       <div className="form-group">
         <label htmlFor="country">Country:</label>
-        <select name="country" id="country" defaultValue="South Korea" onChange={handleCountryChange}>
+        <select name="country" id="country" defaultValue={getDefaultCountry()} onChange={handleCountryChange}>
             <option value="South Korea">South Korea</option>
             <option value="USA">United States</option>
             <option value="China">China</option>

@@ -94,12 +94,35 @@
       }
     }
   }
+
+  // Progress log 스타일 추가
+  .progress-log {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    padding: 20px;
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    border: 1px solid #333;
+    margin-bottom: 20px;
+
+    p {
+      margin: 4px 0;
+    }
+  }
   
   .error-container {
     .error-log {
       color: #ff6b6b;
       background-color: #2e1a1a;
       border: 1px solid #8d4a4a;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      white-space: pre-wrap;
     }
   }
 
@@ -111,6 +134,8 @@
       padding: 1rem;
       background-color: #1e2128;
       border-radius: 8px;
+      line-height: 1.6;
+      font-family: inherit;
     }
     
     .manual-cleanup-guide {
@@ -190,9 +215,12 @@
           font-weight: 500;
           cursor: pointer;
           margin-bottom: 0.5rem;
+          transition: all 0.3s ease;
           
           &:hover {
             background-color: #c0392b;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(231, 76, 60, 0.3);
           }
         }
         
@@ -211,12 +239,36 @@
         padding: 4px 8px;
         font-size: 0.8rem;
         cursor: pointer;
+        transition: all 0.3s ease;
         &:hover {
           background-color: #4a90e2;
           color: white;
         }
       }
     }
+  }
+
+  // 일반 버튼 스타일 추가
+  button {
+    transition: all 0.3s ease;
+    
+    &:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  // Row 레이아웃 추가
+  .row {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
   }
 }
 
@@ -413,6 +465,18 @@
           gap: 5px;
           min-width: 120px;
           justify-content: center;
+        }
+
+        // 추가: 제거되지 않음 상태
+        .status-warning {
+          color: #ff9800;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 120px;
+          justify-content: center;
+          margin-left: 10px;
         }
       }
     }

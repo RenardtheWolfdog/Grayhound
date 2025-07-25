@@ -8,6 +8,7 @@ import re
 import websockets
 import signal
 import atexit
+import time
 
 from typing import Any, List, Dict
 
@@ -29,6 +30,7 @@ logging.basicConfig(
 
 # 서버 인스턴스를 전역 변수로 저장
 server = None
+scan_cache = {}  # 세션별 스캔 결과 캐시
 
 def cleanup_on_exit():
     """프로그램 종료 시 서버를 강제로 종료하고 포트를 해제"""
@@ -177,7 +179,7 @@ async def view_db_workflow(websocket):
         await emit(websocket, "error", f"Failed to fetch database: {e}")
        
 async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: int = 4):
-    """PC 스캔 워크플로우"""
+    """PC 스캔 워크플로우 (탐지 컨텍스트 캐싱)"""
     try:
         ignored_names = json.loads(ignored_names_json)
         await emit(websocket, "progress", {"status": f"Starting system scan (Risk Threshold: {risk_threshold})...", "data": {"ignored_items": ignored_names}})
@@ -191,6 +193,15 @@ async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: i
         threats = result.get("threats", [])
         if not threats:
             await emit(websocket, "progress", {"status": "🎉 Congratulations! No bloatware found to be removed."})
+        else:
+            # 🔥 탐지 컨텍스트를 포함한 전체 정보 캐싱
+            connection_id = id(websocket)
+            
+            scan_cache[connection_id] = {
+                "threats": threats,  # detection_context 포함
+                "timestamp": time.time()
+            }
+            logging.info(f"[CACHE] Stored scan results with detection context for connection {connection_id}: {len(threats)} threats")
         
         await emit(websocket, "scan_result", threats)
     except json.JSONDecodeError:
@@ -198,11 +209,6 @@ async def scan_pc_workflow(websocket, ignored_names_json: str, risk_threshold: i
     except Exception as e:
         logging.error(f"An error occurred during PC scan: {e}", exc_info=True)
         await emit(websocket, "error", f"An unexpected error occurred during scan: {e}")
-
-async def clean_workflow(websocket, items_to_clean_json: str, language: str = "en"):
-    """기존 clean 명령 처리 (Phase A만 실행하도록 리다이렉트)"""
-    # 하위 호환성을 위해 기존 clean 명령을 Phase A로 처리
-    await phase_a_clean_workflow(websocket, items_to_clean_json, language)
 
 # Phase A 워크플로우: 기본 삭제만 수행
 async def phase_a_clean_workflow(websocket, items_to_clean_json: str, language: str = "en"):
@@ -312,58 +318,174 @@ async def phase_c_clean_workflow(websocket, items_to_clean_json: str, language: 
         logging.error(f"Error during Phase C cleaning: {e}", exc_info=True)
         await emit_error(websocket, f"Phase C error: {e}")
 
-async def verify_removal_workflow(websocket, program_name: str):
-    """단일 프로그램이 실제로 제거되었는지 확인하는 워크플로우"""
+# 통합된 제거 상태 확인 워크플로우 (개별/전체 모두 처리)
+async def check_removal_status_workflow(websocket, program_names_json: str):
+    """프로그램들이 실제로 제거되었는지 확인하는 통합 워크플로우 (탐지 컨텍스트 활용)"""
     try:
-        if not program_name:
-            await emit_error(websocket, "No program name provided for verification.")
+        # program_names 파싱
+        try:
+            program_names = json.loads(program_names_json)
+            if isinstance(program_names, str):
+                program_names = [program_names]
+        except json.JSONDecodeError:
+            program_names = [program_names_json]
+        
+        if not program_names:
+            await emit_error(websocket, "No programs to check.")
             return
-            
-        await emit_progress(websocket, f"🔍 Verifying removal of {mask_name(program_name)}...")
-        
-        # SystemProfiler를 통해 현재 설치된 프로그램 목록 확인
-        profiler = SystemProfiler()
-        current_programs = await profiler.create_system_profile()
-        installed_programs = current_programs.get("installed_programs", [])
-        
-        # 프로그램이 제거되었는지 확인
-        is_removed = not any(
-            p['name'].lower() == program_name.lower() 
-            for p in installed_programs
-        )
-        
-        await emit(websocket, "removal_verification", {
-            "program_name": program_name,
-            "is_removed": is_removed,
-            "message": f"{'Successfully removed' if is_removed else 'Still installed'}: {mask_name(program_name)}"
-        })
-        
-    except Exception as e:
-        logging.error(f"Error verifying removal status: {e}", exc_info=True)
-        await emit_error(websocket, f"Failed to verify removal status: {e}")
 
-# 포괄적 리포트 생성 워크플로우
-async def generate_comprehensive_report_workflow(websocket, all_results_json: str, language: str = "en"):
-    """모든 Phase 결과를 종합한 포괄적 리포트 생성"""
-    try:
-        all_results = json.loads(all_results_json)
-        manager = SecurityAgentManager(session_id="grayhound_tauri_session", user_name="user")
+        is_single_check = len(program_names) == 1
         
-        await emit_progress(websocket, "📋 Generating comprehensive cleanup report...")
+        if is_single_check:
+            await emit_progress(websocket, f"🔍 Checking if {mask_name(program_names[0])} is still installed...")
+        else:
+            await emit_progress(websocket, f"🔍 Checking removal status for {len(program_names)} programs...")
         
-        # 포괄적 리포트 생성 (Phase별 결과 포함)
-        comprehensive_feedback = await manager._generate_comprehensive_feedback(all_results, language)
+        # 캐시에서 초기 스캔 결과 가져오기
+        connection_id = id(websocket)
+        cached_data = scan_cache.get(connection_id)
         
-        await emit(websocket, "final_report_generated", {
-            "llm_feedback": comprehensive_feedback,
-            "comprehensive": True
+        if not cached_data:
+            logging.warning(f"[CACHE] No cached scan data found for connection {connection_id}")
+            await emit_error(websocket, "No cached scan data found. Please run a scan first.")
+            return
+        
+        logging.info(f"[CACHE] Using cached scan data for connection {connection_id}")
+        
+        # SecurityAgentManager 인스턴스 생성
+        manager = SecurityAgentManager(session_id="grayhound_check_session", user_name="user")
+        
+        # 현재 시스템 프로파일 생성
+        profiler = SystemProfiler()
+        current_profile = await profiler.create_system_profile()
+        
+        # 캐시된 threats에서 프로그램별 탐지 컨텍스트 매핑 생성
+        threat_context_map = {}
+        for threat in cached_data.get("threats", []):
+            threat_context_map[threat["name"]] = threat.get("detection_context")
+        
+        # 각 프로그램에 대해 제거 상태 확인
+        status_results = []
+        
+        for program_name in program_names:
+            # 해당 프로그램의 탐지 컨텍스트 가져오기
+            detection_context = threat_context_map.get(program_name)
+            
+            if not detection_context:
+                logging.warning(f"[CACHE] No detection context found for '{mask_name(program_name)}'")
+                # 컨텍스트가 없으면 제거된 것으로 간주
+                status_results.append({
+                    "name": program_name,
+                    "masked_name": mask_name(program_name),
+                    "status": "removed",
+                    "message": f"Successfully removed: {mask_name(program_name)}"
+                })
+                continue
+            
+            # 원본 매칭된 threat 정보
+            matched_threat = detection_context.get("matched_threat", {})
+            program_type = detection_context.get("program_type", "unknown")
+            matched_fields = detection_context.get("matched_fields", {})
+            
+            logging.info(f"[CACHE] Found detection context for '{mask_name(program_name)}': "
+                        f"Type={program_type}, DB Program='{mask_name(matched_fields.get('db_program_name', 'Unknown'))}'")
+            
+            # 프로그램 타입에 따라 다른 검사 수행
+            is_still_installed = False
+            detection_method = "unknown"
+            
+            if program_type == "running_process":
+                # 프로세스인 경우 현재 실행 중인 프로세스에서 확인
+                for proc in current_profile.get("running_processes", []):
+                    if proc.get('name', '').lower() == program_name.lower():
+                        # 동일한 threat와 매칭되는지 Enhanced 매칭으로 확인
+                        is_match, match_reason = manager._enhanced_threat_matching(
+                            proc['name'], 
+                            matched_threat
+                        )
+                        if is_match:
+                            is_still_installed = True
+                            detection_method = match_reason
+                            break
+            else:
+                # 설치된 프로그램인 경우
+                for installed_prog in current_profile.get("installed_programs", []):
+                    if installed_prog.get('name', '').lower() == program_name.lower():
+                        # 동일한 threat와 매칭되는지 Enhanced 매칭으로 확인
+                        is_match, match_reason = manager._enhanced_threat_matching(
+                            installed_prog['name'], 
+                            matched_threat
+                        )
+                        if is_match:
+                            is_still_installed = True
+                            detection_method = match_reason
+                            break
+            
+            # 프로그램명이 변경되었을 수 있으므로 전체 프로필에서 threat 매칭 재검사
+            if not is_still_installed:
+                # 현재 시스템에서 동일한 threat로 탐지되는 항목이 있는지 확인
+                all_programs = current_profile.get("installed_programs", []) + current_profile.get("running_processes", [])
+                
+                for prog in all_programs:
+                    is_match, match_reason = manager._enhanced_threat_matching(
+                        prog.get('name', ''), 
+                        matched_threat
+                    )
+                    if is_match:
+                        is_still_installed = True
+                        detection_method = match_reason
+                        logging.info(f"[CACHE] Found renamed/variant: '{mask_name(prog.get('name', ''))}' "
+                                   f"matches original threat (Method: {match_reason})")
+                        break
+            
+            # 결과 생성
+            if is_still_installed:
+                # 아직 설치되어 있음
+                status_results.append({
+                    "name": program_name,
+                    "masked_name": mask_name(program_name),
+                    "status": "still_exists",
+                    "message": f"Still installed: {mask_name(program_name)}",
+                    "detection_method": detection_method
+                })
+                
+                if is_single_check:
+                    await emit_progress(websocket, f"❌ {mask_name(program_name)} is still installed. Please remove it through Windows Settings.")
+                else:
+                    await emit_progress(websocket, f"❌ {mask_name(program_name)} is still installed (Detection: {detection_method})")
+                
+                logging.info(f"[DEBUG] RESULT: STILL INSTALLED - '{mask_name(program_name)}' (Method: {detection_method})")
+            else:
+                # 제거됨
+                status_results.append({
+                    "name": program_name,
+                    "masked_name": mask_name(program_name),
+                    "status": "removed",
+                    "message": f"Successfully removed: {mask_name(program_name)}"
+                })
+                
+                if is_single_check:
+                    await emit_progress(websocket, f"✅ {mask_name(program_name)} has been successfully removed from your system!")
+                else:
+                    await emit_progress(websocket, f"✅ {mask_name(program_name)} has been removed.")
+                
+                logging.info(f"[DEBUG] RESULT: REMOVED - '{mask_name(program_name)}'")
+        
+        # 결과 요약
+        removed_count = sum(1 for r in status_results if r['status'] == 'removed')
+        still_installed_count = sum(1 for r in status_results if r['status'] == 'still_exists')
+        logging.info(f"[DEBUG] ===== FINAL RESULTS =====")
+        logging.info(f"[DEBUG] Removed: {removed_count}, Still installed: {still_installed_count}")
+        
+        # 결과 전송
+        await emit(websocket, "removal_status_checked", {
+            "results": status_results,
+            "is_single_check": is_single_check
         })
         
-    except json.JSONDecodeError:
-        await emit_error(websocket, "Invalid results format for comprehensive report.")
     except Exception as e:
-        logging.error(f"Error generating comprehensive report: {e}", exc_info=True)
-        await emit_error(websocket, f"Failed to generate comprehensive report: {e}")
+        logging.error(f"Error checking removal status: {e}", exc_info=True)
+        await emit_error(websocket, f"Failed to check removal status: {e}")
 
 async def generate_final_report_workflow(websocket, cleanup_results_json: str, language: str = "en"):
     """수동 작업 완료 후 최종 리포트 생성 워크플로우"""
@@ -520,63 +642,12 @@ async def add_item_to_db_workflow(websocket, program_name: str):
         logging.error(f"An error occurred during program evaluation: {e}", exc_info=True)
         await emit_error(websocket, f"An unexpected error occurred during program evaluation: {e}")        
 
-async def check_removal_status_workflow(websocket, program_names_json: str):
-    """프로그램들이 실제로 제거되었는지 확인하는 워크플로우"""
-    try:
-        program_names = json.loads(program_names_json)
-        if not program_names:
-            await emit_error(websocket, "No programs to check.")
-            return
-
-        await emit_progress(websocket, f"🔍 Checking removal status for {len(program_names)} programs...")
-        
-        # SystemProfiler를 통해 현재 설치된 프로그램 목록 재확인
-        profiler = SystemProfiler()
-        current_programs = await profiler.create_system_profile()
-        installed_programs = current_programs.get("installed_programs", [])
-        
-        # 설치된 프로그램 이름 목록 생성 (소문자로 비교)
-        installed_names = {p['name'].lower() for p in installed_programs}
-        
-        # 각 프로그램의 제거 상태 확인
-        status_results = []
-        for program_name in program_names:
-            if program_name.lower() not in installed_names:
-                # 제거됨 - Phase B: Windows UI 열기 방식으로 처리
-                status_results.append({
-                    "name": program_name,
-                    "masked_name": mask_name(program_name),
-                    "status": "success",
-                    "message": f"Successfully removed: {mask_name(program_name)}",
-                    "phase_completed": "phase_b"
-                })
-                await emit_progress(websocket, f"✅ {mask_name(program_name)} has been removed.")
-            else:
-                # 아직 존재함
-                status_results.append({
-                    "name": program_name,
-                    "masked_name": mask_name(program_name),
-                    "status": "still_exists",
-                    "message": f"Still installed: {mask_name(program_name)}",
-                    "phase_completed": "none"
-                })
-                await emit_progress(websocket, f"❌ {mask_name(program_name)} is still installed.")
-        
-        # Phase B 완료로 처리 (수동 제거 결과 반영)
-        await emit(websocket, "phase_b_complete", {
-            "results": status_results
-        })
-        
-    except json.JSONDecodeError:
-        await emit_error(websocket, "Invalid program list format.")
-    except Exception as e:
-        logging.error(f"Error checking removal status: {e}", exc_info=True)
-        await emit_error(websocket, f"Failed to check removal status: {e}")
-
 # --- WebSocket 메시지 핸들러 ---
 async def handler(websocket):
     """클라이언트와의 WebSocket 통신을 담당하는 메인 핸들러"""
-    logging.info(f"클라이언트 연결됨: {websocket.remote_address}")
+    connection_id = id(websocket)
+    logging.info(f"클라이언트 연결됨: {websocket.remote_address} (ID: {connection_id})")
+    
     try:
         async for message in websocket:
             try:
@@ -584,25 +655,16 @@ async def handler(websocket):
                 command = data.get("command")
                 args = data.get("args", [])
                
-                # # --- 디버깅 로그 ---
-                # if command:
-                #     logging.info("--- 디버그 시작 ---")
-                #     logging.info(f"수신된 command 변수 값: '{command}'")
-                #     logging.info(f"command 변수의 타입: {type(command)}")
-                #     logging.info(f"command 변수의 바이트(hex) 표현: {command.encode('utf-8').hex()}")
-                #     logging.info("---  디버그 종료  ---")
-                # # --- 디버깅 로그 끝 ---
-
                 # 클라이언트에서 받은 명령에 따라 워크플로우 실행
                 if command == "update_db":
                     await generate_queries_workflow(websocket, args[0], args[1])
                 elif command == "confirm_db_update":
                     await confirm_db_update_workflow(websocket, args[0])
                 elif command == "view_db":
-                    await view_db_workflow(websocket) # websocket 객체 전달
+                    await view_db_workflow(websocket)
                 elif command == "scan":
                     ignored_list = args[0] if args else "[]"
-                    risk_thresh = int(args[1]) if len(args) > 1 else 6 # 기본값 6
+                    risk_thresh = int(args[1]) if len(args) > 1 else 6
                     await scan_pc_workflow(websocket, ignored_list, risk_thresh)
  
                 # === Phase 시스템 명령들 ===
@@ -615,13 +677,11 @@ async def handler(websocket):
                 elif command == "phase_c_clean":
                     language_arg = args[1] if len(args) > 1 else "en"
                     await phase_c_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
-                elif command == "generate_comprehensive_report":
-                    language_arg = args[1] if len(args) > 1 else "en"
-                    await generate_comprehensive_report_workflow(websocket, args[0] if args else "[]", language=language_arg)
+                    
+                # === 통합된 제거 확인 명령 ===
                 elif command == "check_removal_status":
                     await check_removal_status_workflow(websocket, args[0] if args else "[]")
-                elif command == "verify_removal":
-                    await verify_removal_workflow(websocket, args[0] if args else "")
+                
                 elif command == "force_clean":
                     language_arg = args[1] if len(args) > 1 else "en"
                     await force_clean_workflow(websocket, args[0] if args else "[]", language=language_arg)
@@ -643,14 +703,18 @@ async def handler(websocket):
                 logging.error(f"잘못된 JSON 형식 수신: {message}")
                 await emit_error(websocket, "잘못된 JSON 형식의 메시지입니다.")
             except Exception as e:
-                # 어떤 명령 처리 중 오류가 났는지 로깅
                 logging.error(f"'{data.get('command')}' 명령 처리 중 오류: {e}", exc_info=True)
                 await emit_error(websocket, f"서버 오류 발생: {e}")
 
     except websockets.exceptions.ConnectionClosed:
-        logging.info(f"클라이언트 연결 종료: {websocket.remote_address}")
+        logging.info(f"클라이언트 연결 종료: {websocket.remote_address} (ID: {connection_id})")
     except Exception as e:
         logging.error(f"핸들러에서 심각한 오류 발생: {e}", exc_info=True)
+    finally:
+        # 🔥 연결 종료 시 캐시 정리
+        if connection_id in scan_cache:
+            del scan_cache[connection_id]
+            logging.info(f"[CACHE] Cleared cache for connection {connection_id}")
 
 
 async def main():

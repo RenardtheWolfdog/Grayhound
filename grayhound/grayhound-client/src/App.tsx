@@ -4,11 +4,20 @@ import { DBUpdater } from "./components/DBUpdater";
 import { Dashboard } from "./components/Dashboard";
 import { DBViewer } from "./components/DBViewer";
 import { SystemScanner } from "./components/SystemScanner";
+import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import "./App.scss";
 
 function App() {
+  return (
+    <SettingsProvider>
+      <AppContent />
+    </SettingsProvider>
+  );
+}
+
+function AppContent() {
   const [currentView, setCurrentView] = useState("dashboard");
-  const [language, setLanguage] = useState("en");
+  const { language, setLanguage } = useSettings();
 
   const renderView = () => {
     switch (currentView) {

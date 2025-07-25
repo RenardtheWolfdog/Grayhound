@@ -32,7 +32,7 @@ interface CleanupResult {
 interface PhaseStatus {
   [key: string]: {
     phase_a?: 'pending' | 'success' | 'failed';
-    phase_b?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+    phase_b?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped' | 'verification_failed';
     phase_c?: 'pending' | 'success' | 'failed' | 'skipped';
     removal_verified?: boolean;
     ui_automation?: 'success' | 'failed' | 'timeout';
@@ -247,6 +247,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
   const [revealedPrograms, setRevealedPrograms] = useState<Set<string>>(new Set()); // 마스킹 해제된 프로그램들
   const [showLegalDisclaimer, setShowLegalDisclaimer] = useState(false); // 법적 고지 표시 여부
   const [copiedProgram, setCopiedProgram] = useState<string | null>(null); // 복사된 프로그램 이름
+  const [verifyingPrograms, setVerifyingPrograms] = useState<Set<string>>(new Set()); // 검증 중인 프로그램들
   
   const logContainerRef = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
@@ -257,6 +258,8 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
   const handleBackendMessage = (payload: string) => {
     try {
       const { type, data } = JSON.parse(payload) as BackendMessage;
+      
+      console.log('Backend message received:', type, data); // 디버깅용
 
       switch (type) {
         case 'scan_result':
@@ -289,8 +292,9 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
           handlePhaseCComplete(data);
           break;
 
-        case 'removal_verification':
-          handleRemovalVerification(data);
+        // 통합된 제거 확인 처리
+        case 'removal_status_checked':
+          handleRemovalStatusChecked(data);
           break;
 
         case 'final_report_generated':
@@ -346,11 +350,14 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     }
   };
 
-  // Phase B 완료 처리 (자동화 관련 로직 제거)
+  // Phase B 완료 처리 (check_removal_status 응답 처리 포함)
   const handlePhaseBComplete = (data: any) => {
     const results = data.results || [];
     
-    results.forEach((result: CleanupResult) => {
+    console.log('Phase B complete data:', results); // 디버깅용
+    
+    results.forEach((result: any) => {
+      // 일반 Phase B 작업 (Settings 열기)
       setPhaseStatus(prev => ({
         ...prev,
         [result.name]: {
@@ -389,41 +396,129 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     });
   };
 
-  // 개별 프로그램 제거 확인 처리
-  const handleRemovalVerification = (data: any) => {
-    const { program_name, is_removed } = data;
+  // 통합된 제거 상태 확인 처리
+  const handleRemovalStatusChecked = (data: any) => {
+    const results = data.results || [];
+    const isSingleCheck = data.is_single_check || false;
     
-    setPhaseStatus(prev => ({
-      ...prev,
-      [program_name]: {
-        ...prev[program_name],
-        phase_b: is_removed ? 'completed' : 'in_progress',
-        removal_verified: is_removed
+    console.log(`Removal status check (${isSingleCheck ? 'single' : 'batch'}):`, results);
+    
+    results.forEach((result: any) => {
+      const isRemoved = result.status === 'removed';
+      const stillExists = result.status === 'still_exists';
+
+      // 검증 완료 - 로딩 상태 제거
+      setVerifyingPrograms(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(result.name);
+        return newSet;
+      });
+      
+      // 제거 상태 확인
+      if (stillExists) {
+        setPhaseStatus(prev => ({
+          ...prev,
+          [result.name]: {
+            ...prev[result.name],
+            phase_b: 'verification_failed',
+            removal_verified: false
+          }
+        }));
+      } else if (isRemoved) {
+        setPhaseStatus(prev => ({
+          ...prev,
+          [result.name]: {
+            ...prev[result.name],
+            phase_b: 'completed',
+            removal_verified: true
+          }
+        }));
       }
-    }));
+      
+      if (isRemoved) {
+        // 전체 결과 업데이트
+        setAllResults(prev => {
+          const existingIndex = prev.findIndex(r => r.name === result.name);
+          const updatedResult = {
+            name: result.name,
+            masked_name: result.masked_name,
+            status: 'success' as const,
+            message: result.message,
+            phase_completed: 'phase_b',
+            path: ''
+          };
+          
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            updated[existingIndex] = updatedResult;
+            return updated;
+          }
+          return [...prev, updatedResult];
+        });
+      }
+      
+      // 개별 확인인 경우 더 상세한 메시지
+      if (isSingleCheck) {
+        if (isRemoved) {
+          setProgressLog(prev => [...prev, `✅ Verification complete: ${result.masked_name} has been successfully removed from your system!`]);
+        } else if (stillExists) {
+          setProgressLog(prev => [...prev, `❌ Verification complete: ${result.masked_name} is still installed. Please remove it through Windows Settings.`]);
+        }
+      } else {
+        // 배치 확인
+        if (isRemoved) {
+          setProgressLog(prev => [...prev, `✅ ${result.masked_name} has been successfully removed!`]);
+        } else if (stillExists) {
+          setProgressLog(prev => [...prev, `❌ ${result.masked_name} is still installed (${result.detection_method}). Please remove it through Windows Settings.`]);
+        }
+      }
+    });
+  };
+
+  // 개별 프로그램 제거 확인 (통합 함수 사용)
+  const verifyRemoval = (programName: string) => {
+    setProgressLog(prev => [...prev, `🔍 Checking if ${programName} is still installed...`]);
     
-    if (is_removed) {
-      setProgressLog(prev => [...prev, `✅ ${program_name} has been successfully removed!`]);
-    } else {
-      setProgressLog(prev => [...prev, `❌ ${program_name} is still installed.`]);
-    }
+    // 검증 중 상태로 설정
+    setVerifyingPrograms(prev => new Set(prev).add(programName));
+    
+    // 개별 프로그램도 동일한 명령 사용
+    ws.current?.send(JSON.stringify({
+      command: "check_removal_status",
+      args: [programName]  // 단일 문자열로 전송
+    }));
   };
 
   // 모든 프로그램의 제거 상태 확인
   const checkRemovalStatus = async () => {
-    setProgressLog(prev => [...prev, "🔍 Checking removal status..."]);
+    setProgressLog(prev => [...prev, "🔍 Checking removal status for all programs..."]);
     
     const programsToCheck = phaseAResults
       .filter(r => r.status !== 'success')
       .map(r => r.name);
     
+    // 모든 프로그램을 검증 중 상태로 설정
+    setVerifyingPrograms(new Set(programsToCheck));
+    
+    // 각 프로그램의 현재 상태 초기화 (검증 대기 중)
+    programsToCheck.forEach(programName => {
+      setPhaseStatus(prev => ({
+        ...prev,
+        [programName]: {
+          ...prev[programName],
+          removal_verified: false
+        }
+      }));
+    });
+    
+    // 배열로 전송
     ws.current?.send(JSON.stringify({
       command: "check_removal_status",
       args: [JSON.stringify(programsToCheck)]
     }));
   };
 
-  // WebSocket 연결 설정
+  // WebSocket 에러 처리 시 검증 상태도 초기화
   useEffect(() => {
     ws.current = new WebSocket('ws://localhost:8765');
     ws.current.onopen = () => {
@@ -435,6 +530,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
     ws.current.onerror = () => {
       setError("Connection to server failed. Please ensure the server is running.");
       setStep('error');
+      setVerifyingPrograms(new Set()); // 에러 시 검증 상태 초기화
     };
     return () => {
       ws.current?.close();
@@ -538,16 +634,6 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
       args: [JSON.stringify([{ name: programName }]), language]
     }));
   };
-
-  // 개별 프로그램 제거 확인
-  const verifyRemoval = (programName: string) => {
-    setProgressLog(prev => [...prev, `Verifying removal of ${programName}...`]);
-    
-    ws.current?.send(JSON.stringify({
-      command: "verify_removal",
-      args: [programName]
-    }));
-  };
   
   // 모든 항목이 처리되었는지 확인
   const allItemsProcessed = () => {
@@ -556,11 +642,11 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
       .every(item => {
         const status = phaseStatus[item.name];
         return status?.phase_b === 'completed' || 
-               status?.phase_c === 'success' ||
-               status?.removal_verified ||
-               status?.phase_b === 'skipped';
+                status?.phase_c === 'success' ||
+                status?.removal_verified ||
+                status?.phase_b === 'skipped';
       });
-  };
+  };  
 
   // 종합 리포트 생성
   const handleGenerateReport = () => {
@@ -788,6 +874,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
             const status = phaseStatus[item.name] || {};
             const isInProgress = status.phase_b === 'in_progress';
             const isCompleted = status.phase_b === 'completed';
+            const isVerificationFailed = status.phase_b === 'verification_failed';
             
             return (
               <div key={item.name} className="phase-b-item">
@@ -806,12 +893,13 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
                   {/* Phase B 상태 표시 */}
                   {isCompleted ? (
                     <span className="status-success">{t.removeSuccess}</span>
-                  ) : isInProgress ? (
+                  ) : (isInProgress && !isVerificationFailed) ? (
                     <button 
                       className="verify-btn"
                       onClick={() => verifyRemoval(item.name)}
+                      disabled={verifyingPrograms.has(item.name)}
                     >
-                      {t.verifyRemoval}
+                      {verifyingPrograms.has(item.name) ? 'Checking...' : t.verifyRemoval}
                     </button>
                   ) : (
                     <button 
@@ -823,7 +911,12 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
                     </button>
                   )}
                   
-                  {/* Phase C 버튼 - Phase B가 완료되지 않았거나 실패한 경우에만 표시 */}
+                  {/* 제거되지 않았을 때 표시되는 메시지 */}
+                  {isVerificationFailed && (
+                    <span className="status-warning">{t.notRemoved}</span>
+                  )}
+                  
+                  {/* Phase C 버튼 - Phase B가 완료되지 않았을 때만 표시 */}
                   {!isCompleted && (
                     status.phase_c === 'success' ? (
                       <span className="status-success">{t.removeSuccess}</span>
@@ -833,7 +926,7 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
                       <button 
                         className="phase-c-btn"
                         onClick={() => handlePhaseC(item.name)}
-                        disabled={isInProgress}
+                        disabled={isInProgress && !isVerificationFailed}
                       >
                         {t.forceRemove}
                       </button>
@@ -852,13 +945,17 @@ export const SystemScanner = ({ setCurrentView, language }: SystemScannerProps) 
         </div>
         
         <div className="phase-actions">
-          <button onClick={checkRemovalStatus} className="check-btn">
-            {t.checkRemovalStatus} (All)
+          <button 
+            onClick={checkRemovalStatus} 
+            className="check-btn"
+            disabled={verifyingPrograms.size > 0}
+          >
+            {verifyingPrograms.size > 0 ? 'Checking...' : `${t.checkRemovalStatus} (All)`}
           </button>
           <button 
             onClick={handleGenerateReport} 
             className="report-btn"
-            disabled={!allItemsProcessed()}
+            disabled={!allItemsProcessed() || verifyingPrograms.size > 0}
           >
             {t.proceedToReport}
           </button>
