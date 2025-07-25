@@ -148,9 +148,7 @@ npm run tauri dev
 
 1. Update Bloatware DB: The first step is to populate your database. Go to the "Update Bloatware DB" section, select your country and OS, and click "Generate Queries". Review the AI-generated queries and confirm to start the web crawling and analysis process. This may take several minutes.
 
-
-2. View & Ignore DB: You can view all identified bloatware in the "View & Ignore DB" section. If there's a program you trust, you can mark it to be ignored in future scans.
-
+2. View & Ignore DB: You can view all identified bloatware in the "View & Ignore DB" section. If there's a program you trust, you can mark it to be ignored in future scans. Additionally, you can manually add programs you consider bloatware by entering their names. To prevent misuse (e.g., entering critical system components like "SYSTEM32"), all user-submitted entries are validated through internal logic and LLM-based RAG (Retrieval-Augmented Generation) verification before being accepted.
 
 3. Scan & Clean PC: Go to "Scan & Clean PC" to analyze your system. Review the list of found threats and select the ones you wish to remove. After cleaning, an AI-generated report will summarize the actions taken.
 
